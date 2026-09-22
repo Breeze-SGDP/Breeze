@@ -1,0 +1,56 @@
+# Breeze Dash
+
+A small one-finger Android arcade game. You steer a leaf on the breeze and thread
+it through the gap in each falling wall, collecting gems and the occasional shield.
+
+Written in Kotlin with nothing but the Android framework — the whole game is drawn
+on a `SurfaceView` canvas from its own render thread. No game engine, no assets,
+one runtime dependency (`androidx.core`).
+
+## How to play
+
+| | |
+|---|---|
+| Steer | Drag anywhere on the screen; the leaf follows your finger |
+| Start / restart | Tap |
+| Pause | Back gesture, or leave the app |
+| Gem (gold) | +25 points |
+| Shield (blue) | Absorbs one wall hit, up to 3 stacked |
+| Passing a wall | +10 points |
+
+One hit without a shield ends the run. Your best score is saved locally.
+
+Difficulty ramps for the first ~37 seconds: walls fall from 0.40 to 0.85 screen
+heights per second, the gap narrows from 36% to 24% of the screen width, and the
+spawn interval tightens from 1.05s to 0.52s. Consecutive gaps never shift by more
+than 42% of the screen width, so every wall is reachable from the last one.
+
+## Building
+
+Requires JDK 17 and the Android SDK (API 34).
+
+```bash
+./gradlew assembleDebug          # APK at app/build/outputs/apk/debug/
+./gradlew installDebug           # build and install on a connected device
+```
+
+Or open the project directory in Android Studio and press Run. If Gradle cannot
+find your SDK, create a `local.properties` with `sdk.dir=/path/to/Android/sdk`
+(Android Studio writes this for you on first sync).
+
+- `minSdk` 26, `targetSdk`/`compileSdk` 34, portrait only
+- No permissions, no network, no analytics
+
+## Layout
+
+```
+app/src/main/java/com/breeze/dash/
+  MainActivity.kt   Activity host: fullscreen setup, loop start/stop, back handling
+  GameView.kt       SurfaceView + render thread: simulation, collision, drawing
+  Entities.kt       Barrier, Pickup, Particle, Streak
+```
+
+`GameView` owns all mutable state and touches it only from the render thread.
+Input is recorded on the UI thread into `pendingTap` / `pendingTouchX` /
+`pendingPause` and drained by `consumeInput()` at the top of each simulation
+step, so the world is never mutated from two threads at once.

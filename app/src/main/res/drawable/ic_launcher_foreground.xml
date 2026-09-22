@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- Leaf body -->
+    <path
+        android:fillColor="#7BE495"
+        android:pathData="M54,26 C70,34 76,50 70,66 C64,80 50,84 38,78 C28,72 26,58 32,46 C38,34 46,29 54,26 Z" />
+    <!-- Leaf midrib -->
+    <path
+        android:strokeColor="#16624A"
+        android:strokeWidth="2.2"
+        android:strokeLineCap="round"
+        android:pathData="M62,34 L40,76" />
+    <!-- Breeze streaks -->
+    <path
+        android:strokeColor="#4FC3F7"
+        android:strokeWidth="3"
+        android:strokeLineCap="round"
+        android:pathData="M24,40 L38,40" />
+    <path
+        android:strokeColor="#4FC3F7"
+        android:strokeWidth="3"
+        android:strokeLineCap="round"
+        android:pathData="M20,52 L31,52" />
+</vector>
