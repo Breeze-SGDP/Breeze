@@ -41,6 +41,20 @@ find your SDK, create a `local.properties` with `sdk.dir=/path/to/Android/sdk`
 - `minSdk` 26, `targetSdk`/`compileSdk` 34, portrait only
 - No permissions, no network, no analytics
 
+### Building without a PC
+
+`.github/workflows/android.yml` builds the debug APK on every push and attaches
+it to the workflow run, so you do not need a local Android SDK to get an
+installable build:
+
+1. Open the repository's **Actions** tab and pick the latest *Android CI* run.
+2. Download the `breeze-dash-debug-<run number>` artifact and unzip it.
+3. Install the APK on a device with "install unknown apps" enabled for your
+   browser or file manager.
+
+The APK is signed with the standard Android debug key, so it installs for
+testing but cannot be published to Play.
+
 ## Layout
 
 ```
