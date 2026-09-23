@@ -5,9 +5,10 @@
  * WebView from assets/game/index.html, and docs/preview.html inlines it, so the
  * phone build and the browser preview can never drift apart.
  *
- * Layout: balance tables -> run and route generation -> Flight (the dodging
- * sim, in a fixed 1000-unit-wide logical space) -> drawing -> App (screens,
- * input, persistence). Pure logic has no DOM access, so it also runs in Node.
+ * Layout: balance and goods -> market and news -> cargo hold (a grid of shaped
+ * pieces) -> run and route generation -> Flight (the dodging sim, in a fixed
+ * 1000-unit-wide logical space) -> drawing -> App (screens, input, saves).
+ * Everything above App is pure logic with no DOM access, so it runs in Node.
  */
 (function (global) {
   'use strict';
@@ -48,27 +49,31 @@
 
   // ---------------------------------------------------------------- balance
   const BAL = {
-    stages: 8,                 // flights per run; planet 0 is home, planet 8 the finish
-    startCredits: 40,
+    stages: 8,                 // flights per run; planet 0 is home, planet 8 the terminus
+    startCredits: 120,
     engine: { thrust: [1.0, 1.2, 1.4, 1.65, 1.9], cost: [70, 140, 240, 380] },
-    hold: { capacity: [4, 6, 8, 11, 14], width: [1.0, 1.08, 1.16, 1.26, 1.36], cost: [60, 120, 210, 340] },
+    // The hold is a grid. A bigger hold carries more but widens the ship.
+    hold: { grid: [[4, 3], [5, 3], [5, 4], [6, 4], [6, 5]], pods: [4, 6, 8, 11, 14], width: [1.0, 1.08, 1.16, 1.26, 1.36], cost: [60, 120, 210, 340] },
     hull: { max: [100, 130, 165, 205, 250], cost: [50, 100, 170, 270] },
     repairPerHp: 0.5,
-    mass: { base: 1, perHoldLevel: 0.08, perCargo: 0.075 },
+    mass: { base: 1, perHoldLevel: 0.08, perWeight: 0.075 },
     lateral: 1.9,              // max sideways speed at agility 1, in screen widths per second
     baseTrip: 30,              // seconds to fly route distance 1.0 at agility 1
-    shipW: 0.12,               // hull width as a fraction of screen width (before hold scaling)
+    shipW: 0.12,
     shipLen: 0.15,
     shipY: 0.80,
-    invuln: 0.9,               // grace period after a hit
-    rate: (stage) => 18 + stage * 5,          // credits per cargo unit, before planet and route factors
+    invuln: 0.9,
+    explosionDamage: 22,       // extra hull damage when fuel next to oxidizer goes up
+    contaminatedValue: 0.4,    // sale value of food or medicine that rode next to isotopes
     dangerBase: (stage) => 1.2 + stage * 0.75,
   };
 
+  // Routes trade time for danger. Faster arrival earns a premium on the cargo
+  // sold at the port you land at.
   const ROUTES = [
-    { id: 'detour', name: '우회 항로', tag: '돌아감', dist: 1.35, danger: -1.2, pay: 0.8, color: '#7BE495' },
+    { id: 'detour', name: '우회 항로', tag: '돌아감', dist: 1.35, danger: -1.2, pay: 0.85, color: '#7BE495' },
     { id: 'standard', name: '표준 항로', tag: '보통', dist: 1.0, danger: 0, pay: 1.0, color: '#6FD3FF' },
-    { id: 'direct', name: '직항', tag: '지름길', dist: 0.65, danger: 2.3, pay: 1.35, color: '#FF6B7A' },
+    { id: 'direct', name: '직항', tag: '지름길', dist: 0.65, danger: 2.3, pay: 1.3, color: '#FF6B7A' },
   ];
 
   const MODS = {
@@ -84,8 +89,35 @@
   const HAZARD_MODS = ['belt', 'debris', 'ion', 'swarm', 'comet'];
   const LOOT_MODS = ['scrap', 'supply'];
 
+  // ------------------------------------------------------------------ goods
+  // Shapes are cells [x, y]. Rules: fuel touching oxidizer explodes when the
+  // ship is hit; food and medicine touching isotopes arrive contaminated.
+  const GOODS = {
+    food: { name: '식량', shape: [[0, 0]], base: 21, weight: 0.6, color: '#8fd16a', mark: '식', traits: ['sensitive'] },
+    medicine: { name: '의약품', shape: [[0, 0]], base: 45, weight: 0.3, color: '#f2efe6', mark: '약', traits: ['sensitive'] },
+    oxidizer: { name: '산화제', shape: [[0, 0]], base: 36, weight: 0.8, color: '#6fd3ff', mark: '산', traits: ['oxidizer'] },
+    water: { name: '얼음물', shape: [[0, 0], [1, 0]], base: 36, weight: 1.4, color: '#9db8ff', mark: '물', traits: [] },
+    fuel: { name: '연료', shape: [[0, 0], [0, 1]], base: 51, weight: 1.0, color: '#ff9f43', mark: '연', traits: ['fuel'] },
+    ore: { name: '광석', shape: [[0, 0], [0, 1], [1, 1]], base: 48, weight: 2.4, color: '#b08f78', mark: '광', traits: [] },
+    electronics: { name: '전자부품', shape: [[0, 0], [1, 0], [2, 0], [1, 1]], base: 99, weight: 1.0, color: '#b9a4ff', mark: '전', traits: [] },
+    isotope: { name: '동위원소', shape: [[0, 0], [1, 0], [0, 1], [1, 1]], base: 117, weight: 2.0, color: '#e2f25a', mark: '방', traits: ['radioactive'] },
+  };
+  const GOOD_IDS = Object.keys(GOODS);
+  const TRAIT_LABEL = { sensitive: '오염 주의', oxidizer: '산화성', fuel: '가연성', radioactive: '방사능' };
+
+  // What each kind of world makes cheaply (< 1) and pays dearly for (> 1).
+  const MARKETS = {
+    ocean: { food: 0.55, medicine: 1.0, oxidizer: 1.13, water: 0.74, fuel: 1.13, ore: 1.39, electronics: 0.87, isotope: 1.26 },
+    rock: { food: 1.39, medicine: 1.26, oxidizer: 0.68, water: 1.46, fuel: 1.0, ore: 0.48, electronics: 1.13, isotope: 0.74 },
+    ice: { food: 1.46, medicine: 1.19, oxidizer: 0.87, water: 0.42, fuel: 1.26, ore: 1.26, electronics: 1.0, isotope: 1.13 },
+    lava: { food: 1.32, medicine: 1.13, oxidizer: 0.61, water: 1.65, fuel: 0.48, ore: 0.8, electronics: 1.26, isotope: 0.68 },
+    gas: { food: 1.26, medicine: 1.0, oxidizer: 1.26, water: 1.13, fuel: 0.55, ore: 1.39, electronics: 1.46, isotope: 1.32 },
+    terminus: { food: 1.39, medicine: 1.46, oxidizer: 1.32, water: 1.39, fuel: 1.32, ore: 1.46, electronics: 1.52, isotope: 1.46 },
+  };
+  const MARKET_LABEL = { ocean: '해양 행성', rock: '암석 행성', ice: '얼음 위성', lava: '화산 위성', gas: '가스 행성', terminus: '종착 시장' };
+
   const HOME = { name: '브리즈 정거장', type: 'ocean', c1: '#3aa0d8', c2: '#0d3a66', glow: '#7fd4ff' };
-  const FINAL = { name: '오르트 종착지', type: 'gas', c1: '#e8c48a', c2: '#6b4a2a', glow: '#ffd79a', rings: true };
+  const FINAL = { name: '오르트 종착지', type: 'gas', market: 'terminus', c1: '#e8c48a', c2: '#6b4a2a', glow: '#ffd79a', rings: true };
   const PLANET_POOL = [
     { name: '케레스', type: 'rock', c1: '#a89a8a', c2: '#3d3630', glow: '#d8cbb8' },
     { name: '베스타', type: 'rock', c1: '#c2b59b', c2: '#4a4033', glow: '#e8dcc2' },
@@ -99,15 +131,146 @@
     { name: '트리톤', type: 'ice', c1: '#e8c0c8', c2: '#6b4a58', glow: '#ffd9e0' },
   ];
 
+  // ------------------------------------------------------- market and news
+  const NEWS_CAUSES = {
+    shortage: {
+      food: ['흉작', '식량 배급 시작'], medicine: ['전염병 확산', '병원선 입항'], oxidizer: ['채굴 폭약 수요', '산소 공급 차질'],
+      water: ['정수 설비 고장', '가뭄 비상'], fuel: ['연료 저장고 화재', '함대 급유 수요'], ore: ['조선소 확장', '궤도 건설 붐'],
+      electronics: ['통신망 붕괴', '컴퓨터 부품 품귀'], isotope: ['원자로 재가동', '연구소 대량 주문'],
+    },
+    glut: {
+      food: ['대풍작', '수경 농장 증설'], medicine: ['제약 공장 증설'], oxidizer: ['화학 공장 재가동'],
+      water: ['새 빙하 발견'], fuel: ['정제소 증설'], ore: ['새 광맥 발견'],
+      electronics: ['압수 밀수품 방출'], isotope: ['원자로 폐쇄'],
+    },
+  };
+
+  /** Price of a good on a planet, as seen when the run is at stage `at`. */
+  function price(run, planetIndex, good, at) {
+    const when = at == null ? run.stage : at;
+    const p = run.planets[planetIndex];
+    let f = MARKETS[p.market || p.type][good] * p.noise[good];
+    for (const e of run.events) {
+      if (e.planet === planetIndex && e.good === good && when >= e.from && when <= e.until) f *= e.factor;
+    }
+    return Math.max(2, Math.round(GOODS[good].base * f));
+  }
+  function activeEvent(run, planetIndex, good, at) {
+    const when = at == null ? run.stage : at;
+    return run.events.find((e) => e.planet === planetIndex && e.good === good && when >= e.from && when <= e.until) || null;
+  }
+
+  function makeEvent(run, rng, planetIndex) {
+    const good = GOOD_IDS[Math.floor(rng() * GOOD_IDS.length)];
+    const shortage = rng() < 0.62;
+    const kind = shortage ? 'shortage' : 'glut';
+    const causes = NEWS_CAUSES[kind][good];
+    const cause = causes[Math.floor(rng() * causes.length)];
+    const p = run.planets[planetIndex];
+    const g = GOODS[good].name;
+    const factor = shortage ? 1.45 + rng() * 0.35 : 0.55 + rng() * 0.15;
+    const e = {
+      planet: planetIndex, good, kind,
+      factor: Math.round(factor * 100) / 100,
+      from: run.stage,
+      until: Math.max(planetIndex, run.stage + 2 + Math.floor(rng() * 2)),
+      headline: `${p.name} ${g} ${shortage ? '부족' : '과잉'}`,
+      text: `${p.name}, ${cause}. ${g} ${shortage ? '부족으로 값이 오름' : '물량이 넘쳐 값이 내림'}`,
+    };
+    run.events.push(e);
+    run.feed.unshift({ text: e.text, stage: run.stage, kind });
+    run.feed.length = Math.min(run.feed.length, 10);
+    return e;
+  }
+  /** One or two fresh headlines about ports ahead, when docking. */
+  function newsAtPort(run, rng) {
+    const last = BAL.stages;
+    const n = 1 + (rng() < 0.5 ? 1 : 0);
+    for (let i = 0; i < n; i++) {
+      const target = Math.min(last, run.stage + 1 + Math.floor(rng() * 3));
+      if (target > run.stage) makeEvent(run, rng, target);
+    }
+  }
+
+  // --------------------------------------------------------------- the hold
+  function normShape(cells) {
+    const mx = Math.min(...cells.map((c) => c[0])), my = Math.min(...cells.map((c) => c[1]));
+    return cells.map(([x, y]) => [x - mx, y - my]).sort((a, b) => a[1] - b[1] || a[0] - b[0]);
+  }
+  function rotatedShape(good, rot) {
+    let s = GOODS[good].shape.map((c) => c.slice());
+    for (let i = 0; i < ((rot % 4) + 4) % 4; i++) s = s.map(([x, y]) => [-y, x]);
+    return normShape(s);
+  }
+  /** Cells for a shape placed so its top-left-most cell lands on (ax, ay). */
+  function cellsAt(shape, ax, ay) {
+    const [ox, oy] = shape[0];
+    return shape.map(([x, y]) => [ax + x - ox, ay + y - oy]);
+  }
+  const holdSize = (lv) => BAL.hold.grid[lv.hold];
+  function occupancy(pieces, cols, rows, exceptId) {
+    const occ = new Array(cols * rows).fill(null);
+    for (const p of pieces) {
+      if (p.id === exceptId) continue;
+      for (const [x, y] of p.cells) if (x >= 0 && y >= 0 && x < cols && y < rows) occ[y * cols + x] = p;
+    }
+    return occ;
+  }
+  function fits(cells, occ, cols, rows) {
+    return cells.every(([x, y]) => x >= 0 && y >= 0 && x < cols && y < rows && !occ[y * cols + x]);
+  }
+  /** First free spot for a good, trying every rotation. */
+  function findSpot(pieces, lv, good) {
+    const [cols, rows] = holdSize(lv);
+    const occ = occupancy(pieces, cols, rows);
+    for (let y = 0; y < rows; y++) {
+      for (let x = 0; x < cols; x++) {
+        for (let rot = 0; rot < 4; rot++) {
+          const cells = cellsAt(rotatedShape(good, rot), x, y);
+          if (fits(cells, occ, cols, rows)) return { cells, rot };
+        }
+      }
+    }
+    return null;
+  }
+  const holdWeight = (pieces) => pieces.reduce((a, p) => a + GOODS[p.good].weight, 0);
+  const usedCells = (pieces) => pieces.reduce((a, p) => a + p.cells.length, 0);
+  function touching(a, b) {
+    for (const [x1, y1] of a.cells) for (const [x2, y2] of b.cells) if (Math.abs(x1 - x2) + Math.abs(y1 - y2) === 1) return true;
+    return false;
+  }
+  /** Dangerous neighbours in the hold: explosive pairs and contaminated goods. */
+  function holdHazards(pieces) {
+    const has = (p, t) => GOODS[p.good].traits.indexOf(t) >= 0;
+    const explosive = [], contaminated = [];
+    for (const a of pieces) {
+      for (const b of pieces) {
+        if (has(a, 'fuel') && has(b, 'oxidizer') && touching(a, b)) explosive.push([a, b]);
+        if (has(a, 'sensitive') && has(b, 'radioactive') && touching(a, b) && contaminated.indexOf(a) < 0) contaminated.push(a);
+      }
+    }
+    return { explosive, contaminated };
+  }
+  /** What a piece fetches at the current port: contamination and arrival premium apply. */
+  function saleValue(run, piece, planetIndex, at, premium) {
+    let v = price(run, planetIndex == null ? run.stage : planetIndex, piece.good, at);
+    if (piece.contaminated) v *= BAL.contaminatedValue;
+    const prem = premium != null ? premium
+      : run.premium && run.premium.stage === run.stage && piece.arrivedAt === run.stage ? run.premium.mult : 1;
+    return Math.round(v * prem);
+  }
+
   // --------------------------------------------------------- run and ship
-  function shipStats(lv, cargo) {
+  function shipStats(lv, weight) {
     const thrust = BAL.engine.thrust[lv.engine];
-    const mass = BAL.mass.base + BAL.mass.perHoldLevel * lv.hold + BAL.mass.perCargo * cargo;
+    const mass = BAL.mass.base + BAL.mass.perHoldLevel * lv.hold + BAL.mass.perWeight * weight;
     const agility = clamp(thrust / mass, 0.4, 1.6);
+    const [cols, rows] = BAL.hold.grid[lv.hold];
     return {
       thrust, mass, agility,
       speedFactor: Math.pow(agility, 0.7),
-      capacity: BAL.hold.capacity[lv.hold],
+      cells: cols * rows,
+      pods: BAL.hold.pods[lv.hold],
       widthScale: BAL.hold.width[lv.hold],
       maxHull: BAL.hull.max[lv.hull],
     };
@@ -118,21 +281,26 @@
   function newRun(seed) {
     const rng = mulberry32(seed);
     const middle = shuffle(PLANET_POOL.slice(), rng).slice(0, BAL.stages - 1);
-    const planets = [HOME].concat(middle, [FINAL]).map((p, i) => Object.assign({}, p, {
-      rateFactor: i === 0 ? 1 : Math.round((0.9 + rng() * 0.3) * 100) / 100,
-    }));
-    return {
-      v: 2, seed: seed >>> 0, stage: 0,
-      credits: BAL.startCredits, earned: 0,
+    const planets = [HOME].concat(middle, [FINAL]).map((p) => {
+      const noise = {};
+      for (const g of GOOD_IDS) noise[g] = Math.round((0.9 + rng() * 0.2) * 100) / 100;
+      return Object.assign({}, p, { noise });
+    });
+    const run = {
+      v: 3, seed: seed >>> 0, stage: 0,
+      credits: BAL.startCredits,
       lv: { engine: 0, hold: 0, hull: 0 },
       hull: BAL.hull.max[0],
-      cargoSel: BAL.hold.capacity[0],
+      hold: [], nextId: 1,
       planets, routes: null, routesFor: -1, routeSel: 1,
-      log: { hits: 0, lost: 0, scrap: 0 },
+      events: [], feed: [], premium: null,
+      log: { hits: 0, lost: 0, exploded: 0, scrap: 0, traded: 0 },
     };
+    newsAtPort(run, mulberry32(seed ^ 0xA5A5A5));
+    newsAtPort(run, mulberry32(seed ^ 0x5A5A5A));
+    return run;
   }
-  /** Credits per unit for the contract offered at the current port. */
-  const contractRate = (run) => Math.round(BAL.rate(run.stage) * run.planets[run.stage + 1].rateFactor);
+  const netWorth = (run) => run.credits + run.hold.reduce((a, p) => a + saleValue(run, p, run.stage, run.stage, 1), 0);
 
   function genRoutes(run) {
     const rng = mulberry32((run.seed ^ Math.imul(run.stage + 1, 0x9E3779B1)) >>> 0);
@@ -175,14 +343,17 @@
   const W = 1000; // logical width; height follows the screen's aspect ratio
 
   class Flight {
-    constructor(run, route, loaded, seed) {
+    constructor(run, route, seed) {
       this.run = run;
       this.route = routeInfo(route);
-      this.loaded = loaded;
-      this.lost = 0;
+      this.loaded = run.hold.length;
+      this.lostPieces = [];   // spilled and never caught
+      this.exploded = [];     // destroyed by fuel meeting oxidizer
+      this.news = null;
+      this.newsDone = false;
       this.scrap = 0;
       this.hits = 0;
-      this.stats = shipStats(run.lv, loaded);
+      this.stats = shipStats(run.lv, holdWeight(run.hold));
       this.plan = hazardPlan(this.route.D, this.route.mods);
       this.trip = tripSeconds(this.route, this.stats);
       this.rng = mulberry32(seed);
@@ -215,9 +386,18 @@
       };
       // Spread this flight's scrap evenly over its hazardous middle section.
       this.scrapEvery = Math.max(1.2, (this.trip - 5.7) / p.scrapCount);
+      if (holdHazards(run.hold).explosive.length) this.warn('폭발 위험 화물 적재 중', 2.4, 'warn');
     }
 
-    get aboard() { return this.loaded - this.lost; }
+    get aboard() { return this.run.hold.length; }
+    get lost() { return this.loaded - this.aboard; }
+    /** Hold cells no longer aboard: in the air, fallen, or blown up. */
+    lostCells() {
+      let n = 0;
+      for (const q of this.pickups) if (q.piece) n += q.piece.cells.length;
+      for (const p of this.lostPieces.concat(this.exploded)) n += p.cells.length;
+      return n;
+    }
     get shipW() { return W * BAL.shipW * this.stats.widthScale; }
     get shipH() { return W * BAL.shipLen; }
     get shipY() { return this.H * BAL.shipY - this.shipLift; }
@@ -255,7 +435,16 @@
       if (this.state === 'fly') {
         this.progress = Math.min(1, this.progress + dt / this.trip);
         if (this.spawning) this.spawn(dt, V);
+        if (this.spawning && !this.newsDone && this.progress >= 0.45) {
+          // Breaking news mid-flight: prices ahead move while you are out here.
+          this.newsDone = true;
+          const target = Math.min(BAL.stages, this.run.stage + 1 + Math.floor(this.rng() * 3));
+          this.news = makeEvent(this.run, this.rng, target);
+          this.warn(`속보 · ${this.news.headline}`, 2.8, 'news');
+        }
         if (this.progress >= 1) {
+          for (const q of this.pickups) if (q.piece) this.lostPieces.push(q.piece);
+          this.pickups = this.pickups.filter((q) => !q.piece);
           this.state = 'arrive';
           this.endT = 0;
           this.wind = 0;
@@ -396,12 +585,25 @@
       this.invuln = BAL.invuln;
       this.shake = 1;
       this.burst(x, y, 16, '#ffd2a0', 0.35, 0.5);
-      const lose = Math.min(this.aboard, dmg >= 24 ? 2 : 1);
+      // Fuel stowed against oxidizer goes up on impact.
+      const pair = holdHazards(run.hold).explosive[0];
+      if (pair) {
+        for (const piece of pair) {
+          const k = run.hold.indexOf(piece);
+          if (k >= 0) { run.hold.splice(k, 1); this.exploded.push(piece); }
+        }
+        run.hull = Math.max(0, run.hull - BAL.explosionDamage);
+        this.shake = 1.6;
+        this.burst(x, y, 40, '#ff9f43', 0.55, 0.8);
+        this.burst(x, y, 20, '#6fd3ff', 0.4, 0.6);
+        this.warn('화물 폭발', 1.4);
+      }
+      // Loose cargo tumbles up and falls back past the ship: catch it to recover it.
+      const lose = Math.min(run.hold.length, 1);
       for (let i = 0; i < lose; i++) {
-        this.lost++;
-        // Spilled cargo tumbles up and falls back past the ship: catch it to recover it.
+        const piece = run.hold.splice(Math.floor(this.rng() * run.hold.length), 1)[0];
         this.pickups.push({
-          kind: 'crate', x: this.shipX, y: this.shipY - this.shipH * 0.2, r: W * 0.026,
+          kind: 'crate', piece, x: this.shipX, y: this.shipY - this.shipH * 0.2, r: W * (0.022 + 0.004 * piece.cells.length),
           vx: (this.rng() - 0.5) * W * 0.55, vy: -this.H * 0.32, g: this.H * 0.8, delay: 0.45, value: 1, spin: 0,
         });
       }
@@ -473,7 +675,10 @@
           this.pickups.splice(i, 1);
           continue;
         }
-        if (p.y - p.r > H) this.pickups.splice(i, 1);
+        if (p.y - p.r > H) {
+          if (p.piece) this.lostPieces.push(p.piece);
+          this.pickups.splice(i, 1);
+        }
       }
 
       for (let i = this.particles.length - 1; i >= 0; i--) {
@@ -494,8 +699,8 @@
         this.run.hull = Math.min(max, this.run.hull + p.value);
         this.burst(p.x, p.y, 10, '#7be495', 0.22, 0.45);
       } else if (p.kind === 'crate') {
-        this.lost = Math.max(0, this.lost - 1);
-        this.burst(p.x, p.y, 8, '#f4a93a', 0.2, 0.4);
+        this.run.hold.push(p.piece); // its cells are still free: nothing else moves in the hold
+        this.burst(p.x, p.y, 8, GOODS[p.piece.good].color, 0.2, 0.4);
       }
     }
 
@@ -816,7 +1021,7 @@
         ctx.fillRect(q.x - q.r * 0.16, q.y - q.r * 0.55, q.r * 0.32, q.r * 1.1);
       } else {
         ctx.globalAlpha = q.delay > 0 ? 0.6 : 1;
-        ctx.fillStyle = '#f4a93a';
+        ctx.fillStyle = q.piece ? GOODS[q.piece.good].color : '#f4a93a';
         roundRect(ctx, q.x - q.r, q.y - q.r * 0.8, q.r * 2, q.r * 1.6, 6); ctx.fill();
         ctx.strokeStyle = 'rgba(80,40,0,0.6)';
         ctx.lineWidth = 3;
@@ -828,7 +1033,11 @@
     if (f.state !== 'dead') {
       const blink = f.invuln > 0 && Math.floor(f.invuln * 12) % 2 === 0 ? 0.35 : 1;
       const flame = 0.55 + 0.45 * Math.sin(t * 40) * 0.5 + (f.stats.thrust - 1) * 0.5;
-      drawShip(ctx, f.shipX, f.shipY, f.shipW, f.shipH, f.bank, f.stats.capacity, f.aboard, f.lost, flame, blink);
+      const pods = f.stats.pods, cells = f.stats.cells;
+      const used = usedCells(f.run.hold);
+      const full = used ? Math.max(1, Math.round((used / cells) * pods)) : 0;
+      const gone = Math.min(pods - full, Math.round((f.lostCells() / cells) * pods));
+      drawShip(ctx, f.shipX, f.shipY, f.shipW, f.shipH, f.bank, pods, full, gone, flame, blink);
     }
 
     for (const q of f.particles) {
@@ -908,14 +1117,16 @@
 
     // Cargo aboard
     ctx.textAlign = 'left';
-    ctx.fillText(`화물 ${f.aboard}/${f.loaded}`, x0, py + 42);
+    ctx.fillText(`화물 ${f.aboard}/${f.loaded}개`, x0, py + 42);
 
     // Warning banner
     if (f.warning) {
       const w = f.warning;
       const blink = Math.floor((w.total - w.t) * 6) % 2 === 0;
-      const col = w.tone === 'warn' ? '#b9a4ff' : '#ff6b7a';
-      ctx.font = FONT(40, 800);
+      const col = w.tone === 'warn' ? '#b9a4ff' : w.tone === 'news' ? '#6fd3ff' : '#ff6b7a';
+      let size = 40;
+      ctx.font = FONT(size, 800);
+      while (ctx.measureText(w.text).width > W - 140 && size > 24) { size -= 2; ctx.font = FONT(size, 800); }
       ctx.textAlign = 'center';
       const tw = ctx.measureText(w.text).width;
       roundRect(ctx, W / 2 - tw / 2 - 30, H * 0.24 - 42, tw + 60, 62, 31);
@@ -931,7 +1142,7 @@
 
   /** Star chart on the route screen: three paths from here to the next planet. */
   function drawRouteChart(ctx, H, run, t) {
-    const a = { x: W * 0.17, y: H * 0.235 }, b = { x: W * 0.83, y: H * 0.085 };
+    const a = { x: W * 0.17, y: H * 0.25 }, b = { x: W * 0.83, y: H * 0.115 };
     const here = run.planets[run.stage], next = run.planets[run.stage + 1];
     const ctrl = {
       detour: { x: W * 0.78, y: H * 0.33 },
@@ -971,7 +1182,7 @@
 
   // --------------------------------------------------------------- the app
   const SAVE_KEY = 'breeze-dash2-run';
-  const BEST_KEY = 'breeze-dash2-best';
+  const BEST_KEY = 'breeze-dash2-best-v3';
   const store = {
     get(k) { try { return global.localStorage.getItem(k); } catch (_) { return null; } },
     set(k, v) { try { global.localStorage.setItem(k, v); } catch (_) { /* storage unavailable */ } },
@@ -983,17 +1194,28 @@
     for (let i = 0; i < max; i++) s += `<i class="${i < n ? cls || 'on' : ''}"></i>`;
     return `<span class="bd-pips">${s}</span>`;
   };
+  /** Tiny picture of a good's footprint. */
+  function shapeHTML(good, rot) {
+    const cells = rotatedShape(good, rot || 0);
+    const w = Math.max(...cells.map((c) => c[0])) + 1, h = Math.max(...cells.map((c) => c[1])) + 1;
+    const dots = cells.map(([x, y]) => `<i style="grid-column:${x + 1};grid-row:${y + 1}"></i>`).join('');
+    return `<span class="bd-shape" style="--c:${GOODS[good].color};--sw:${w};--sh:${h}">${dots}</span>`;
+  }
+  const signed = (n) => (n > 0 ? `+₵${fmt(n)}` : n < 0 ? `−₵${fmt(-n)}` : '±0');
 
   class App {
     constructor(root, opts) {
       this.opts = opts || {};
       this.root = root;
       root.classList.add('bd');
-      root.innerHTML = '<canvas class="bd-canvas"></canvas><div class="bd-layer"></div>' +
+      root.innerHTML = '<canvas class="bd-canvas"></canvas>' +
+        '<div class="bd-layer"><div class="bd-news" hidden></div><div class="bd-body"></div></div>' +
         '<button class="bd-pause" type="button" aria-label="일시정지" hidden><i></i><i></i></button>';
       this.canvas = root.querySelector('.bd-canvas');
       this.ctx = this.canvas.getContext('2d');
       this.layer = root.querySelector('.bd-layer');
+      this.newsEl = root.querySelector('.bd-news');
+      this.body = root.querySelector('.bd-body');
       this.pauseBtn = root.querySelector('.bd-pause');
       this.rng = mulberry32(this.opts.scene ? 99 : (Math.random() * 4294967296) >>> 0);
       this.stars = seedStars(this.rng, 110);
@@ -1001,10 +1223,14 @@
       this.scale = 1;
       this.t = 0;
       this.screen = 'title';
+      this.tab = 'cargo';
+      this.held = null;
+      this.toast = null;
       this.paused = false;
       this.run = null;
       this.flight = null;
       this.result = null;
+      this.newsKey = '';
       this.best = parseInt(store.get(BEST_KEY) || '0', 10) || 0;
       this.pointerDown = false;
       this.alive = true;
@@ -1087,20 +1313,23 @@
           const f = this.flight;
           f.targetX = clamp(f.shipX + (e.key === 'ArrowLeft' ? -160 : 160), 0, W);
           e.preventDefault();
+        } else if ((e.key === 'r' || e.key === 'R') && this.held) {
+          this.act('rotate');
         }
       });
     }
 
-    // ---- state changes ----
+    // ---- saves ----
     save() { if (this.run && !this.opts.scene) store.set(SAVE_KEY, JSON.stringify(this.run)); }
     loadSave() {
       try {
         const r = JSON.parse(store.get(SAVE_KEY) || 'null');
-        return r && r.v === 2 && Array.isArray(r.planets) ? r : null;
+        return r && r.v === 3 && Array.isArray(r.planets) && Array.isArray(r.hold) ? r : null;
       } catch (_) { return null; }
     }
 
     show(screen) {
+      if (screen !== 'port') this.putBack();
       this.screen = screen;
       this.root.dataset.screen = screen;
       this.pauseBtn.hidden = screen !== 'flight' || !!this.opts.scene;
@@ -1108,8 +1337,24 @@
       this.render();
     }
 
+    /** The ticker is kept outside render() so it scrolls on while you shop. */
+    renderNews() {
+      const on = this.run && (this.screen === 'port' || this.screen === 'route');
+      this.newsEl.hidden = !on;
+      if (!on) return;
+      const items = this.run.feed.slice(0, 6);
+      const key = items.map((i) => i.text).join('|');
+      if (key === this.newsKey) return;
+      this.newsKey = key;
+      if (!items.length) { this.newsEl.innerHTML = ''; return; }
+      const one = items.map((i) => `<span class="bd-news-item ${i.kind}${i.stage === this.run.stage ? ' fresh' : ''}">${esc(i.text)}</span>`).join('');
+      const secs = Math.max(16, Math.round(key.length * 0.3));
+      this.newsEl.innerHTML = `<span class="bd-news-tag">뉴스</span><div class="bd-news-view"><div class="bd-news-track" style="--dur:${secs}s">${one}${one}</div></div>`;
+    }
+
     render() {
-      const keep = this.layer.querySelector('.bd-sheet');
+      this.renderNews();
+      const keep = this.body.querySelector('.bd-sheet');
       const scroll = keep ? keep.scrollTop : 0;
       const html = {
         title: () => this.titleHTML(),
@@ -1120,31 +1365,111 @@
         over: () => this.endHTML(false),
         win: () => this.endHTML(true),
       }[this.screen]();
-      this.layer.innerHTML = html;
-      const sheet = this.layer.querySelector('.bd-sheet');
+      this.body.innerHTML = html;
+      const sheet = this.body.querySelector('.bd-sheet');
       if (sheet && keep) sheet.scrollTop = scroll;
+    }
+
+    say(text) { this.toast = { text, until: this.t + 2.6 }; }
+
+    putBack() {
+      if (!this.held || !this.run) return;
+      this.held.piece.cells = this.held.from;
+      this.held.piece.rot = this.held.fromRot;
+      this.run.hold.push(this.held.piece);
+      this.held = null;
     }
 
     act(a, arg) {
       const run = this.run;
+      const final = run && run.stage >= BAL.stages;
       switch (a) {
         case 'new':
           this.run = newRun((Math.random() * 4294967296) >>> 0);
+          this.tab = 'cargo';
           this.show('port');
           break;
         case 'continue':
           this.run = this.loadSave();
+          this.tab = 'cargo';
           this.show(this.run ? 'port' : 'title');
           break;
-        case 'cargo': {
-          const cap = BAL.hold.capacity[run.lv.hold];
-          run.cargoSel = clamp(run.cargoSel + Number(arg), 0, cap);
+        case 'tab':
+          this.putBack();
+          this.tab = arg;
+          this.render();
+          break;
+        case 'buy': {
+          if (final) break;
+          if (this.held) { this.say('들고 있는 화물을 먼저 내려놓으세요'); this.render(); break; }
+          const cost = price(run, run.stage, arg);
+          if (run.credits < cost) { this.say('크레딧이 부족합니다'); this.render(); break; }
+          const spot = findSpot(run.hold, run.lv, arg);
+          if (!spot) { this.say('빈 칸이 모자랍니다. 화물을 옮겨 자리를 만들어 보세요'); this.render(); break; }
+          run.credits -= cost;
+          run.hold.push({ id: run.nextId++, good: arg, rot: spot.rot, cells: spot.cells, paid: cost, contaminated: false, arrivedAt: -1 });
+          this.say(`${GOODS[arg].name} 샀습니다 −₵${fmt(cost)}`);
+          this.save();
+          this.render();
+          break;
+        }
+        case 'cell': {
+          const [x, y] = arg.split(',').map(Number);
+          const [cols, rows] = holdSize(run.lv);
+          if (this.held) {
+            const p = this.held.piece;
+            const cells = cellsAt(rotatedShape(p.good, p.rot), x, y);
+            if (fits(cells, occupancy(run.hold, cols, rows), cols, rows)) {
+              p.cells = cells;
+              run.hold.push(p);
+              this.held = null;
+              this.save();
+            } else {
+              this.say('그 자리에는 들어가지 않습니다');
+            }
+          } else {
+            const p = run.hold.find((q) => q.cells.some((c) => c[0] === x && c[1] === y));
+            if (p) {
+              run.hold.splice(run.hold.indexOf(p), 1);
+              this.held = { piece: p, from: p.cells, fromRot: p.rot };
+            }
+          }
+          this.render();
+          break;
+        }
+        case 'rotate':
+          if (this.held) { this.held.piece.rot = (this.held.piece.rot + 1) % 4; this.render(); }
+          break;
+        case 'putback':
+          this.putBack();
+          this.render();
+          break;
+        case 'sell': {
+          if (!this.held) break;
+          const v = saleValue(run, this.held.piece);
+          run.credits += v;
+          run.log.traded += v;
+          this.say(`${GOODS[this.held.piece.good].name} 팔았습니다 +₵${fmt(v)}`);
+          this.held = null;
+          this.save();
+          this.render();
+          break;
+        }
+        case 'sell-all': {
+          this.putBack();
+          const v = run.hold.reduce((s, p) => s + saleValue(run, p), 0);
+          if (!run.hold.length) break;
+          run.credits += v;
+          run.log.traded += v;
+          this.say(`화물 ${run.hold.length}개를 팔았습니다 +₵${fmt(v)}`);
+          run.hold = [];
+          this.save();
           this.render();
           break;
         }
         case 'up': {
           const kind = arg, lv = run.lv[kind], cost = BAL[kind].cost[lv];
-          if (lv >= 4 || run.credits < cost) break;
+          if (final || lv >= 4 || run.credits < cost) break;
           run.credits -= cost;
           run.lv[kind] = lv + 1;
           if (kind === 'hull') run.hull += BAL.hull.max[lv + 1] - BAL.hull.max[lv];
@@ -1165,12 +1490,18 @@
           break;
         }
         case 'to-route':
+          this.putBack();
           if (!run.routes || run.routesFor !== run.stage) {
             run.routes = genRoutes(run);
             run.routesFor = run.stage;
             run.routeSel = 1;
           }
           this.show('route');
+          break;
+        case 'finish':
+          this.act('sell-all');
+          this.finishRun();
+          this.show('win');
           break;
         case 'pick':
           run.routeSel = Number(arg);
@@ -1195,6 +1526,7 @@
           this.show('title');
           break;
         case 'to-port':
+          this.tab = 'cargo';
           this.show('port');
           break;
         case 'title':
@@ -1208,7 +1540,7 @@
     launch() {
       const run = this.run;
       const route = run.routes[run.routeSel];
-      this.flight = new Flight(run, route, run.cargoSel, (run.seed ^ Math.imul(run.stage + 7, 0x85EBCA6B)) >>> 0);
+      this.flight = new Flight(run, route, (run.seed ^ Math.imul(run.stage + 7, 0x85EBCA6B)) >>> 0);
       this.flight.setAspect(this.H / W);
       this.paused = false;
       this.pointerDown = false;
@@ -1219,8 +1551,10 @@
     endFlight() {
       const f = this.flight, run = this.run;
       run.log.hits += f.hits;
-      run.log.lost += f.lost;
+      run.log.lost += f.lostPieces.length;
+      run.log.exploded += f.exploded.length;
       run.log.scrap += f.scrap;
+      const names = (list) => list.map((p) => GOODS[p.good].name);
       if (f.state === 'dead') {
         this.result = { dead: true, origin: run.planets[run.stage].name, dest: run.planets[run.stage + 1].name, route: f.route.name };
         this.flight = null;
@@ -1228,43 +1562,47 @@
         this.show('over');
         return;
       }
-      const rate = contractRate(run);
-      const delivered = f.aboard;
-      const pay = Math.round(delivered * rate * f.route.pay);
-      run.credits += pay + f.scrap;
-      run.earned += pay + f.scrap;
-      this.result = { delivered, loaded: f.loaded, lost: f.lost, rate, routePay: f.route.pay, pay, scrap: f.scrap, planet: run.planets[run.stage + 1].name };
+      const fresh = holdHazards(run.hold).contaminated.filter((p) => !p.contaminated);
+      fresh.forEach((p) => { p.contaminated = true; });
       run.stage += 1;
+      run.credits += f.scrap;
+      run.premium = { stage: run.stage, mult: f.route.pay };
+      run.hold.forEach((p) => { p.arrivedAt = run.stage; });
       run.routes = null;
-      run.cargoSel = Math.min(run.cargoSel, BAL.hold.capacity[run.lv.hold]);
+      run.events = run.events.filter((e) => e.until >= run.stage);
+      newsAtPort(run, mulberry32((run.seed ^ Math.imul(run.stage, 0x27D4EB2F)) >>> 0));
+      this.result = {
+        planet: run.planets[run.stage].name,
+        lost: names(f.lostPieces), exploded: names(f.exploded), contaminated: names(fresh),
+        scrap: f.scrap, premium: f.route.pay, route: f.route.name,
+        value: run.hold.reduce((s, p) => s + saleValue(run, p), 0),
+        news: f.news ? f.news.text : null,
+      };
       this.flight = null;
-      if (run.stage >= BAL.stages) {
-        this.finishRun();
-        this.show('win');
-      } else {
-        this.save();
-        this.show('arrival');
-      }
+      this.save();
+      this.show('arrival');
     }
 
     finishRun() {
       store.del(SAVE_KEY);
-      this.newBest = this.run.earned > this.best;
+      this.score = this.run.credits;
+      this.newBest = this.score > this.best;
       if (this.newBest) {
-        this.best = this.run.earned;
+        this.best = this.score;
         store.set(BEST_KEY, String(this.best));
       }
     }
 
     /** Hardware back / Esc. Returns true when handled inside the game. */
     back() {
+      if (this.held) { this.act('putback'); return true; }
       switch (this.screen) {
         case 'flight':
           if (this.paused) this.act('resume'); else this.pause();
           return true;
         case 'route': this.show('port'); return true;
         case 'port': this.show('title'); return true;
-        case 'arrival': this.show('port'); return true;
+        case 'arrival': this.act('to-port'); return true;
         case 'over': case 'win': this.show('title'); return true;
         default: return false;
       }
@@ -1280,6 +1618,7 @@
 
     tick(dt) {
       this.t += dt;
+      if (this.toast && this.t > this.toast.until) { this.toast = null; if (this.screen === 'port') this.render(); }
       if (this.screen === 'flight' && this.flight && !this.paused) {
         const f = this.flight;
         f.update(dt);
@@ -1314,7 +1653,7 @@
           break;
         case 'port':
         case 'arrival':
-          drawPlanet(ctx, W * 0.72, H * 0.1, W * 0.34, planet);
+          drawPlanet(ctx, W * 0.74, H * 0.12, W * 0.3, planet);
           break;
         case 'route':
           drawRouteChart(ctx, H, run, this.t);
@@ -1334,32 +1673,101 @@
     // ---- screens ----
     titleHTML() {
       const saved = this.loadSave();
-      const at = saved ? saved.planets[saved.stage].name : '';
+      const at = saved ? saved.planets[Math.min(saved.stage, BAL.stages)].name : '';
       return `<div class="bd-title-screen">
         <div class="bd-logo"><span>BREEZE DASH</span><b>II</b></div>
         <p class="bd-sub">우주 화물선 로그라이크</p>
-        <p class="bd-desc">화물을 싣고 행성 ${BAL.stages}곳을 건너 오르트 종착지까지. 선체가 부서지면 처음부터 다시 시작합니다.</p>
+        <p class="bd-desc">싸게 사서 비싸게 팔며 행성 ${BAL.stages}곳을 건너 오르트 종착지까지. 뉴스를 읽고 화물칸을 잘 채우세요. 선체가 부서지면 처음부터 다시 시작합니다.</p>
         <div class="bd-col">
           ${saved ? `<button class="bd-btn primary" data-act="continue">이어하기 <small>${esc(at)} 정박 중</small></button>` : ''}
           <button class="bd-btn ${saved ? '' : 'primary'}" data-act="new">새 항해</button>
         </div>
         ${this.best ? `<p class="bd-best">최고 기록 <b>₵ ${fmt(this.best)}</b></p>` : ''}
-        <p class="bd-hint">드래그로 조종 · 화물을 많이 실을수록 둔해지지만 많이 법니다</p>
+        <p class="bd-hint">드래그로 조종 · 무거운 화물일수록 둔해집니다</p>
       </div>`;
     }
 
-    portHTML() {
+    holdHTML() {
       const run = this.run;
-      const here = run.planets[run.stage], next = run.planets[run.stage + 1];
-      const st = shipStats(run.lv, run.cargoSel);
-      const cap = st.capacity;
-      const rate = contractRate(run);
-      const std = ROUTES[1];
-      const est = Math.round(run.cargoSel * rate * std.pay);
-      const trip = Math.round(tripSeconds(std, st));
-      const max = st.maxHull;
+      const [cols, rows] = holdSize(run.lv);
+      const occ = occupancy(run.hold, cols, rows);
+      const hz = holdHazards(run.hold);
+      const boom = new Set(), rad = new Set();
+      hz.explosive.forEach(([a, b]) => { boom.add(a.id); boom.add(b.id); });
+      hz.contaminated.forEach((p) => rad.add(p.id));
+      const from = this.held ? new Set(this.held.from.map((c) => c.join(','))) : null;
+      let cells = '';
+      for (let y = 0; y < rows; y++) {
+        for (let x = 0; x < cols; x++) {
+          const p = occ[y * cols + x];
+          if (!p) {
+            cells += `<button class="bd-cell${from && from.has(`${x},${y}`) ? ' was' : ''}" data-act="cell" data-arg="${x},${y}" aria-label="빈 칸 ${x + 1},${y + 1}"></button>`;
+            continue;
+          }
+          const g = GOODS[p.good];
+          const same = (dx, dy) => { const q = occ[(y + dy) * cols + (x + dx)]; return x + dx >= 0 && x + dx < cols && y + dy >= 0 && y + dy < rows && q === p; };
+          const edges = `${same(0, -1) ? '' : ' et'}${same(1, 0) ? '' : ' er'}${same(0, 1) ? '' : ' eb'}${same(-1, 0) ? '' : ' el'}`;
+          const first = p.cells[0][0] === x && p.cells[0][1] === y;
+          const flags = `${boom.has(p.id) ? ' boom' : ''}${rad.has(p.id) || p.contaminated ? ' rad' : ''}`;
+          cells += `<button class="bd-cell full${edges}${flags}" style="--c:${g.color}" data-act="cell" data-arg="${x},${y}" aria-label="${g.name}">${first ? `<b>${g.mark}</b>` : ''}</button>`;
+        }
+      }
+      const warn = [];
+      if (hz.explosive.length) warn.push('<p class="bd-warn boom"><b>폭발 위험</b> 연료와 산화제가 붙어 있습니다. 비행 중 부딪히면 둘 다 터지고 선체가 크게 깎입니다.</p>');
+      const contam = hz.contaminated.filter((p) => !p.contaminated);
+      if (contam.length) warn.push(`<p class="bd-warn rad"><b>오염 위험</b> ${contam.map((p) => GOODS[p.good].name).join(', ')}이 동위원소 옆에 있습니다. 도착하면 값이 ${Math.round(BAL.contaminatedValue * 100)}%로 떨어집니다.</p>`);
+      const spoiled = run.hold.filter((p) => p.contaminated).length;
+      if (spoiled) warn.push(`<p class="bd-warn rad"><b>오염됨</b> 화물 ${spoiled}개는 이미 오염되어 제값을 못 받습니다.</p>`);
+      const h = this.held;
+      const tray = h ? `<div class="bd-tray">
+          ${shapeHTML(h.piece.good, h.piece.rot)}
+          <div class="bd-tray-info"><b>${GOODS[h.piece.good].name}</b><small>빈 칸을 누르면 거기에 놓습니다</small></div>
+          <div class="bd-row tight">
+            <button class="bd-btn buy" data-act="rotate">회전</button>
+            <button class="bd-btn buy" data-act="sell">팔기 ₵${fmt(saleValue(run, h.piece))}</button>
+            <button class="bd-btn buy" data-act="putback">제자리</button>
+          </div>
+        </div>` : '<p class="bd-hint">화물을 누르면 들어서 옮기거나 팔 수 있습니다. 모양이 다르니 빈틈없이 채워 보세요.</p>';
+      const total = run.hold.reduce((s, p) => s + saleValue(run, p), 0);
+      return `<section class="bd-card">
+          <div class="bd-card-h"><b>화물칸 <span class="bd-dim">${usedCells(run.hold)}/${cols * rows}칸</span></b>
+            ${run.hold.length && !h ? `<button class="bd-btn buy" data-act="sell-all">전부 팔기 ₵${fmt(total)}</button>` : ''}</div>
+          <div class="bd-grid" style="--cols:${cols}">${cells}</div>
+          ${tray}
+          ${this.toast ? `<p class="bd-toast">${esc(this.toast.text)}</p>` : ''}
+          ${warn.join('')}
+        </section>`;
+    }
+
+    marketHTML() {
+      const run = this.run;
+      const final = run.stage >= BAL.stages;
+      const next = final ? null : run.planets[run.stage + 1];
+      const rows = GOOD_IDS.map((g) => {
+        const here = price(run, run.stage, g);
+        const there = final ? null : price(run, run.stage + 1, g, run.stage + 1);
+        const diff = final ? 0 : there - here;
+        const evHere = activeEvent(run, run.stage, g), evThere = final ? null : activeEvent(run, run.stage + 1, g, run.stage + 1);
+        const ev = evHere || evThere;
+        const traits = GOODS[g].traits.map((t) => `<em class="t-${t}">${TRAIT_LABEL[t]}</em>`).join('');
+        return `<div class="bd-mrow">
+            ${shapeHTML(g)}
+            <div class="bd-mname"><b>${GOODS[g].name}${ev ? `<span class="bd-ev ${ev.kind}">${ev.kind === 'shortage' ? '부족' : '과잉'}</span>` : ''}</b>
+              <small>${GOODS[g].shape.length}칸 · 무게 ${GOODS[g].weight}${traits}</small></div>
+            <div class="bd-mnum"><span>₵${fmt(here)}</span>${final ? '' : `<small class="${diff > 0 ? 'up' : diff < 0 ? 'down' : ''}">${signed(diff)}</small>`}</div>
+            ${final ? '' : `<button class="bd-btn buy" data-act="buy" data-arg="${g}" ${run.credits < here || this.held ? 'disabled' : ''}>사기</button>`}
+          </div>`;
+      }).join('');
+      return `<section class="bd-card">
+          <div class="bd-card-h"><b>시장</b><span>${final ? '마지막 항구 · 판매만 가능' : `여기 가격 · ${esc(next.name)}에서 팔면`}</span></div>
+          <div class="bd-market">${rows}</div>
+        </section>`;
+    }
+
+    yardHTML() {
+      const run = this.run;
+      const max = BAL.hull.max[run.lv.hull];
       const missing = max - run.hull;
-      const pods = Array.from({ length: cap }, (_, i) => `<i class="${i < run.cargoSel ? 'on' : ''}"></i>`).join('');
       const up = (kind, label, now, nextTxt) => {
         const lv = run.lv[kind];
         const maxed = lv >= 4;
@@ -1373,63 +1781,80 @@
         </div>`;
       };
       const e = run.lv.engine, h = run.lv.hold, u = run.lv.hull;
+      const g = BAL.hold.grid;
       const tenCost = Math.ceil(Math.min(10, missing) * BAL.repairPerHp);
       const allCost = Math.ceil(missing * BAL.repairPerHp);
+      return `<section class="bd-card">
+          <div class="bd-card-h"><b>정비소</b><span>보유 ₵ ${fmt(run.credits)}</span></div>
+          ${up('engine', '엔진', `추력 ${BAL.engine.thrust[e]}`, `${BAL.engine.thrust[e + 1]} · 기동성과 속도 ↑`)}
+          ${up('hold', '화물칸', `${g[h][0]}×${g[h][1]}칸`, h < 4 ? `${g[h + 1][0]}×${g[h + 1][1]}칸 · 선체 폭 ${Math.round(BAL.hold.width[h + 1] * 100)}%` : '')}
+          ${up('hull', '선체', `최대 ${BAL.hull.max[u]}`, `${BAL.hull.max[u + 1]}`)}
+          <div class="bd-up bd-up-repair">
+            <div class="bd-up-info"><div class="bd-up-name"><b>수리</b></div><small>${missing > 0 ? `손상 ${Math.ceil(missing)} · HP당 ₵${BAL.repairPerHp}` : '손상 없음'}</small></div>
+            <div class="bd-row tight">
+              <button class="bd-btn buy" data-act="repair" data-arg="10" ${missing <= 0 || run.credits < tenCost ? 'disabled' : ''}>+10</button>
+              <button class="bd-btn buy" data-act="repair" data-arg="all" ${missing <= 0 || run.credits < 1 ? 'disabled' : ''}>${missing > 0 ? `전부 ₵${fmt(allCost)}` : '전부'}</button>
+            </div>
+          </div>
+        </section>`;
+    }
+
+    portHTML() {
+      const run = this.run;
+      const final = run.stage >= BAL.stages;
+      const here = run.planets[run.stage];
+      const st = shipStats(run.lv, holdWeight(run.hold));
+      const prem = run.premium && run.premium.stage === run.stage && run.premium.mult !== 1 && run.hold.some((p) => p.arrivedAt === run.stage)
+        ? `<span class="bd-stat ${run.premium.mult > 1 ? 'cr' : ''}">도착 화물 ×${run.premium.mult}</span>` : '';
+      const tabs = final ? '' : `<div class="bd-tabs" role="tablist">
+          <button class="${this.tab === 'cargo' ? 'on' : ''}" data-act="tab" data-arg="cargo" role="tab" aria-selected="${this.tab === 'cargo'}">화물·시장</button>
+          <button class="${this.tab === 'yard' ? 'on' : ''}" data-act="tab" data-arg="yard" role="tab" aria-selected="${this.tab === 'yard'}">정비소</button>
+        </div>`;
+      const content = final || this.tab === 'cargo' ? this.holdHTML() + this.marketHTML() : this.yardHTML();
       return `<div class="bd-top">
-          <div class="bd-eyebrow">정박 중 · 다음 항해 ${run.stage + 1} / ${BAL.stages}</div>
+          <div class="bd-eyebrow">${final ? '종착지 · 마지막 항구' : `정박 중 · 다음 항해 ${run.stage + 1} / ${BAL.stages}`} · ${MARKET_LABEL[here.market || here.type]}</div>
           <div class="bd-title">${esc(here.name)}</div>
-          <div class="bd-chips-row"><span class="bd-stat cr">₵ ${fmt(run.credits)}</span><span class="bd-stat hp">선체 ${Math.ceil(run.hull)} / ${max}</span></div>
+          <div class="bd-chips-row"><span class="bd-stat cr">₵ ${fmt(run.credits)}</span><span class="bd-stat hp">선체 ${Math.ceil(run.hull)}/${st.maxHull}</span><span class="bd-stat">기동성 ${Math.round(st.agility * 100)}%</span>${prem}</div>
         </div>
         <div class="bd-sheet">
-          <section class="bd-card">
-            <div class="bd-card-h"><b>화물 계약</b><span>${esc(next.name)}까지 · 개당 ₵${rate}</span></div>
-            <div class="bd-stepper">
-              <button class="bd-btn step" data-act="cargo" data-arg="-1" aria-label="화물 하나 줄이기" ${run.cargoSel <= 0 ? 'disabled' : ''}>−</button>
-              <div class="bd-load"><div class="bd-podbar">${pods}</div><div class="bd-loadnum"><b>${run.cargoSel}</b> / ${cap}개</div></div>
-              <button class="bd-btn step" data-act="cargo" data-arg="1" aria-label="화물 하나 늘리기" ${run.cargoSel >= cap ? 'disabled' : ''}>+</button>
-            </div>
-            <dl class="bd-kv">
-              <div><dt>예상 운임 <small>표준 항로</small></dt><dd class="cr">₵ ${fmt(est)}</dd></div>
-              <div><dt>기동성</dt><dd>${Math.round(st.agility * 100)}%</dd></div>
-              <div><dt>비행 시간 <small>표준 항로</small></dt><dd>약 ${trip}초</dd></div>
-            </dl>
-            <p class="bd-note">많이 실을수록 운임이 늘지만 좌우 반응이 둔해지고 비행이 길어집니다. 부딪히면 화물이 쏟아지고, 떨어지는 화물을 받으면 되찾습니다.</p>
-          </section>
-          <section class="bd-card">
-            <div class="bd-card-h"><b>정비소</b><span>보유 ₵ ${fmt(run.credits)}</span></div>
-            ${up('engine', '엔진', `추력 ${BAL.engine.thrust[e]}`, `${BAL.engine.thrust[e + 1]} · 기동성과 속도 ↑`)}
-            ${up('hold', '화물칸', `적재 ${BAL.hold.capacity[h]}개`, `${BAL.hold.capacity[h + 1]}개 · 선체 폭 ${Math.round((BAL.hold.width[h + 1] || 0) * 100)}%`)}
-            ${up('hull', '선체', `최대 ${BAL.hull.max[u]}`, `${BAL.hull.max[u + 1]}`)}
-            <div class="bd-up bd-up-repair">
-              <div class="bd-up-info"><div class="bd-up-name"><b>수리</b></div><small>${missing > 0 ? `손상 ${Math.ceil(missing)} · HP당 ₵${BAL.repairPerHp}` : '손상 없음'}</small></div>
-              <div class="bd-row">
-                <button class="bd-btn buy" data-act="repair" data-arg="10" ${missing <= 0 || run.credits < tenCost ? 'disabled' : ''}>+10</button>
-                <button class="bd-btn buy" data-act="repair" data-arg="all" ${missing <= 0 || run.credits < 1 ? 'disabled' : ''}>${missing > 0 ? `전부 ₵${fmt(allCost)}` : '전부'}</button>
-              </div>
-            </div>
-          </section>
-          <button class="bd-btn primary wide" data-act="to-route">항로 고르기</button>
+          ${tabs}
+          ${content}
+          ${final
+            ? `<button class="bd-btn primary wide" data-act="finish">항해 마치기 <small>남은 화물을 모두 팔고 끝냅니다</small></button>`
+            : '<button class="bd-btn primary wide" data-act="to-route">항로 고르기</button>'}
         </div>`;
+    }
+
+    /** Projected take at the next port for what is in the hold now. */
+    projectedSale(pay) {
+      const run = this.run;
+      const spoil = new Set(holdHazards(run.hold).contaminated.map((p) => p.id));
+      return run.hold.reduce((s, p) => {
+        const v = price(run, run.stage + 1, p.good, run.stage + 1) * (p.contaminated || spoil.has(p.id) ? BAL.contaminatedValue : 1);
+        return s + Math.round(v * pay);
+      }, 0);
     }
 
     routeHTML() {
       const run = this.run;
       const here = run.planets[run.stage], next = run.planets[run.stage + 1];
-      const rate = contractRate(run);
+      const st = shipStats(run.lv, holdWeight(run.hold));
+      const boom = holdHazards(run.hold).explosive.length > 0;
       const cards = run.routes.map((r, i) => {
         const info = routeInfo(r);
-        const st = shipStats(run.lv, run.cargoSel);
         const t = Math.round(tripSeconds(info, st));
-        const est = Math.round(run.cargoSel * rate * info.pay);
+        const est = this.projectedSale(info.pay);
         const chips = r.mods.map((m) => `<span class="bd-chip ${MODS[m].hazard ? 'hz' : 'ok'}"><b>${MODS[m].name}</b> ${MODS[m].desc}</span>`).join('');
         return `<button class="bd-route ${i === run.routeSel ? 'on' : ''}" data-act="pick" data-arg="${i}" style="--rc:${info.color}" aria-pressed="${i === run.routeSel}">
-          <span class="bd-route-h"><b>${info.name}</b><span class="bd-tag">${info.tag}</span><span class="bd-route-pay">₵ ${fmt(est)}</span></span>
-          <span class="bd-route-stats"><span>약 ${t}초</span><span>위험 ${pips(dangerPips(info.D), 5, 'bad')}</span><span>운임 ×${info.pay}</span></span>
+          <span class="bd-route-h"><b>${info.name}</b><span class="bd-tag">${info.tag}</span><span class="bd-route-pay">${run.hold.length ? `₵ ${fmt(est)}` : ''}</span></span>
+          <span class="bd-route-stats"><span>약 ${t}초</span><span>위험 ${pips(dangerPips(info.D), 5, 'bad')}</span><span>도착 프리미엄 ×${info.pay}</span></span>
           ${chips ? `<span class="bd-chips">${chips}</span>` : '<span class="bd-chips"><span class="bd-chip">특이 사항 없음</span></span>'}
         </button>`;
       }).join('');
       return `<div class="bd-sheet tall">
-          <div class="bd-sheet-h"><div class="bd-eyebrow">항로 선택 · 항해 ${run.stage + 1} / ${BAL.stages}</div><div class="bd-title sm">${esc(here.name)} → ${esc(next.name)}</div></div>
+          <div class="bd-sheet-h"><div class="bd-eyebrow">항로 선택 · 항해 ${run.stage + 1} / ${BAL.stages}</div><div class="bd-title sm">${esc(here.name)} → ${esc(next.name)}</div>
+            <p class="bd-note">${run.hold.length ? `오른쪽 금액은 지금 화물을 ${esc(next.name)}에서 팔 때 예상가입니다. 빨리 도착할수록 더 받습니다.` : '화물칸이 비어 있습니다. 항구로 돌아가 화물을 실을 수 있습니다.'}</p>
+            ${boom ? '<p class="bd-warn boom"><b>폭발 위험</b> 연료와 산화제가 붙어 있습니다.</p>' : ''}</div>
           ${cards}
           <div class="bd-row"><button class="bd-btn" data-act="back-port">항구로</button><button class="bd-btn primary" data-act="launch">출발</button></div>
         </div>`;
@@ -1447,18 +1872,21 @@
     arrivalHTML() {
       const r = this.result, run = this.run;
       const max = BAL.hull.max[run.lv.hull];
+      const list = (a) => (a.length ? a.join(', ') : '없음');
       return `<div class="bd-sheet center">
-          <div class="bd-eyebrow">도착 · 항해 ${run.stage} / ${BAL.stages} 완료</div>
+          <div class="bd-eyebrow">도착 · 항해 ${run.stage} / ${BAL.stages} 완료 · ${esc(r.route)}</div>
           <div class="bd-title">${esc(r.planet)}</div>
           <dl class="bd-ledger">
-            <div><dt>화물 배송</dt><dd>${r.delivered}/${r.loaded}개 × ₵${r.rate} × ${r.routePay}</dd></div>
-            <div><dt>운임</dt><dd class="cr">+ ₵${fmt(r.pay)}</dd></div>
+            <div><dt>잃은 화물</dt><dd class="${r.lost.length ? 'bad' : ''}">${esc(list(r.lost))}</dd></div>
+            <div><dt>폭발한 화물</dt><dd class="${r.exploded.length ? 'bad' : ''}">${esc(list(r.exploded))}</dd></div>
+            <div><dt>오염된 화물</dt><dd class="${r.contaminated.length ? 'bad' : ''}">${esc(list(r.contaminated))}</dd></div>
             <div><dt>주운 고철</dt><dd class="cr">+ ₵${fmt(r.scrap)}</dd></div>
-            <div><dt>잃은 화물</dt><dd class="${r.lost ? 'bad' : ''}">${r.lost}개</dd></div>
             <div><dt>선체</dt><dd>${Math.ceil(run.hull)} / ${max}</dd></div>
-            <div class="total"><dt>보유 크레딧</dt><dd class="cr">₵ ${fmt(run.credits)}</dd></div>
+            <div><dt>도착 프리미엄</dt><dd>×${r.premium} <small>이 항구에서만</small></dd></div>
+            <div class="total"><dt>싣고 온 화물 시세</dt><dd class="cr">₵ ${fmt(r.value)}</dd></div>
           </dl>
-          <button class="bd-btn primary wide" data-act="to-port">항구로</button>
+          ${r.news ? `<p class="bd-note"><b class="bd-newsflag">비행 중 속보</b> ${esc(r.news)}</p>` : ''}
+          <button class="bd-btn primary wide" data-act="to-port">항구로 · 화물 팔기</button>
         </div>`;
     }
 
@@ -1467,12 +1895,13 @@
       return `<div class="bd-sheet center">
           <div class="bd-eyebrow">${win ? '런 완료' : '런 종료'}</div>
           <div class="bd-title">${win ? '종착지 도착' : '선체 파괴'}</div>
-          <p class="bd-note">${win ? `${BAL.stages}번의 항해를 모두 마쳤습니다.` : `${esc(r.origin)} → ${esc(r.dest)}, ${esc(r.route)} 비행 중`}</p>
+          <p class="bd-note">${win ? `${BAL.stages}번의 항해를 모두 마쳤습니다.` : `${esc(r.origin)} → ${esc(r.dest)}, ${esc(r.route)} 비행 중. 싣고 있던 화물도 함께 사라졌습니다.`}</p>
           <dl class="bd-ledger">
-            <div><dt>완료한 항해</dt><dd>${run.stage} / ${BAL.stages}</dd></div>
+            <div><dt>완료한 항해</dt><dd>${Math.min(run.stage, BAL.stages)} / ${BAL.stages}</dd></div>
             <div><dt>부딪힌 횟수</dt><dd>${run.log.hits}</dd></div>
+            <div><dt>잃은 화물 · 폭발</dt><dd>${run.log.lost} · ${run.log.exploded}</dd></div>
             <div><dt>주운 고철</dt><dd class="cr">₵ ${fmt(run.log.scrap)}</dd></div>
-            <div class="total"><dt>총수입</dt><dd class="cr">₵ ${fmt(run.earned)}</dd></div>
+            <div class="total"><dt>최종 크레딧</dt><dd class="cr">₵ ${fmt(this.score)}</dd></div>
             <div><dt>최고 기록</dt><dd>${this.newBest ? '<span class="bd-new">새 기록</span> ' : ''}₵ ${fmt(this.best)}</dd></div>
           </dl>
           <button class="bd-btn primary wide" data-act="new">새 항해</button>
@@ -1485,10 +1914,27 @@
       const run = newRun(20260923);
       run.stage = 3;
       run.lv = { engine: 1, hold: 2, hull: 1 };
-      run.credits = 264;
-      run.earned = 612;
+      run.credits = 186;
       run.hull = 104;
-      run.cargoSel = 6;
+      const put = (good, rot, x, y, extra) => {
+        run.hold.push(Object.assign({ id: run.nextId++, good, rot, cells: cellsAt(rotatedShape(good, rot), x, y), paid: 0, contaminated: false, arrivedAt: -1 }, extra || {}));
+      };
+      put('electronics', 0, 0, 0);
+      put('fuel', 0, 3, 0);
+      put('oxidizer', 0, 4, 0);          // touching the fuel: the hold warns about it
+      put('isotope', 0, 0, 2);
+      put('food', 0, 2, 2);              // touching the isotope: contamination warning
+      put('ore', 0, 3, 2);
+      run.events = [];
+      run.feed = [];
+      const ev = (planet, good, kind, factor, cause) => {
+        const p = run.planets[planet], g = GOODS[good].name, shortage = kind === 'shortage';
+        run.events.push({ planet, good, kind, factor, from: run.stage, until: run.stage + 2, headline: `${p.name} ${g} ${shortage ? '부족' : '과잉'}` });
+        run.feed.unshift({ text: `${p.name}, ${cause}. ${g} ${shortage ? '부족으로 값이 오름' : '물량이 넘쳐 값이 내림'}`, stage: run.stage, kind });
+      };
+      ev(5, 'water', 'glut', 0.62, '새 빙하 발견');
+      ev(4, 'electronics', 'shortage', 1.7, '통신망 붕괴');
+      ev(4, 'medicine', 'shortage', 1.55, '전염병 확산');
       run.routes = genRoutes(run);
       run.routesFor = run.stage;
       run.routeSel = 2;
@@ -1499,18 +1945,20 @@
       this.run = this.demoRun();
       const run = this.run;
       if (name === 'flight') {
+        run.hold = run.hold.filter((p) => p.good !== 'oxidizer');
         const route = { id: 'direct', mods: ['swarm', 'comet'], D: 0 };
         route.D = Math.round(clamp(BAL.dangerBase(run.stage) + 2.3 + 0.8 + 0.7, 0.8, 10) * 100) / 100;
-        const f = new Flight(run, route, 6, 4242);
+        const f = new Flight(run, route, 4242);
         f.setAspect(this.H / W);
         f.spawning = false;
         f.t = 14;
         f.progress = 0.58;
         f.scrap = 36;
-        f.lost = 1;
-        f.spawnSwarm(f.speed);
-        f.pickups.push({ kind: 'crate', x: W * 0.3, y: f.H * 0.7, r: W * 0.026, vx: 0, vy: 0, g: 0, delay: 0, value: 1, spin: 0 });
+        f.warning = null;
+        const spilled = run.hold.splice(run.hold.findIndex((p) => p.good === 'fuel'), 1)[0];
+        f.pickups.push({ kind: 'crate', piece: spilled, x: W * 0.3, y: f.H * 0.7, r: W * 0.03, vx: 0, vy: 0, g: 0, delay: 0, value: 1, spin: 0 });
         f.pickups.push({ kind: 'repair', x: W * 0.82, y: f.H * 0.47, r: W * 0.03, vx: 0, vy: 0, g: 0, delay: 0, value: 18, spin: 0 });
+        f.spawnSwarm(f.speed);
         f.invuln = 999; // the scripted approach must not take hits
         // Fly the lane for real until the swarm reaches the ship.
         for (let i = 0; i < 400; i++) {
@@ -1531,18 +1979,27 @@
         this.flight = f;
         this.screen = 'flight';
         this.root.dataset.screen = 'flight';
-        this.layer.innerHTML = '';
+        this.body.innerHTML = '';
         this.annotation = { cometX: cx };
         return;
       }
       if (name === 'arrival') {
-        this.result = { delivered: 5, loaded: 6, lost: 1, rate: contractRate(run), routePay: 1.35, pay: 0, scrap: 36, planet: run.planets[run.stage + 1].name };
-        this.result.pay = Math.round(this.result.delivered * this.result.rate * this.result.routePay);
+        // A direct run that clipped a rock with fuel stowed against oxidizer.
+        run.hold = run.hold.filter((p) => p.good !== 'fuel' && p.good !== 'oxidizer');
+        run.hold.find((p) => p.good === 'food').contaminated = true;
         run.stage += 1;
-        run.credits = 264 + this.result.pay + 36;
+        run.premium = { stage: run.stage, mult: 1.2 };
+        run.hold.forEach((p) => { p.arrivedAt = run.stage; });
+        this.result = {
+          planet: run.planets[run.stage].name, lost: [], exploded: ['연료', '산화제'], contaminated: ['식량'],
+          scrap: 36, premium: 1.2, route: '직항', value: run.hold.reduce((sum, p) => sum + saleValue(run, p), 0),
+          news: run.feed[0].text,
+        };
+        this.show('arrival');
+        return;
       }
       if (name === 'route') run.routeSel = 2;
-      this.show(name === 'arrival' ? 'arrival' : name);
+      this.show(name);
     }
 
     drawAnnotations(ctx, f, dest) {
@@ -1550,9 +2007,6 @@
       const fs = 30;
       ctx.save();
       ctx.font = FONT(fs, 600);
-      ctx.lineWidth = 3;
-      ctx.strokeStyle = ink;
-      ctx.fillStyle = ink;
       const label = (text, x, y, align) => {
         const tw = ctx.measureText(text).width;
         const bw = tw + 28, bh = fs + 20;
@@ -1578,6 +2032,7 @@
       };
       const arrowDim = (x1, x2, y) => {
         ctx.strokeStyle = ink;
+        ctx.fillStyle = ink;
         ctx.lineWidth = 3;
         ctx.beginPath(); ctx.moveTo(x1, y); ctx.lineTo(x2, y); ctx.stroke();
         for (const [x, d] of [[x1, 1], [x2, -1]]) {
@@ -1585,25 +2040,21 @@
           ctx.beginPath(); ctx.moveTo(x, y - 16); ctx.lineTo(x, y + 16); ctx.stroke();
         }
       };
-
-      // Safe lane through the swarm
       const lane = f.laneNear(f.shipY - f.H * 0.2);
       if (lane) {
-        const y = lane.y;
-        arrowDim(lane.c - f.laneW / 2, lane.c + f.laneW / 2, y);
-        label(`안전 통로 · 폭 ${Math.round((f.laneW / W) * 100)}% W`, lane.c, y - 44, 'center');
+        arrowDim(lane.c - f.laneW / 2, lane.c + f.laneW / 2, lane.y);
+        label(`안전 통로 · 폭 ${Math.round((f.laneW / W) * 100)}% W`, lane.c, lane.y - 44, 'center');
       }
-      // Comet warning line
       if (this.annotation) {
         const x = this.annotation.cometX;
         label('혜성 경고선 · 곧 낙하', x, f.H * 0.36, x > W / 2 ? 'right' : 'left');
       }
-      // Cargo pods on the ship
+      const crate = f.pickups.find((q) => q.piece);
+      if (crate) label(`쏟아진 ${GOODS[crate.piece.good].name} · 받으면 회수`, crate.x + 40, crate.y - 60, 'left');
       const sx = f.shipX, sy = f.shipY;
       const lx = sx < W / 2 ? W * 0.62 : W * 0.06;
-      const { bx, bw } = label(`화물 포드 ${f.aboard}/${f.stats.capacity} · 무거울수록 둔함`, lx, sy + f.shipH * 0.95, 'left');
+      const { bx, bw } = label(`화물칸 ${usedCells(f.run.hold)}/${f.stats.cells}칸 · 무거울수록 둔함`, lx, sy + f.shipH * 0.95, 'left');
       lead(bx + (sx < W / 2 ? 0 : bw), sy + f.shipH * 0.95, sx + (sx < W / 2 ? f.shipW * 0.36 : -f.shipW * 0.36), sy);
-      // Destination planet and progress
       const pr = W * (0.07 + 0.5 * f.progress * f.progress);
       const py = f.H * 0.14 - pr * 0.55 * f.progress;
       label(`목적지 ${dest.name} · 가까울수록 커짐`, W * 0.5, py + pr + 40, 'center');
@@ -1612,32 +2063,35 @@
 
     snapshot() {
       const run = this.run, f = this.flight;
-      const st = run ? shipStats(run.lv, f ? f.loaded : run.cargoSel) : null;
+      const st = run ? shipStats(run.lv, holdWeight(run.hold)) : null;
       const route = f ? f.route : run && run.routes ? routeInfo(run.routes[run.routeSel]) : null;
       return {
         screen: this.screen, paused: this.paused,
         stage: run ? run.stage : 0,
         planet: run ? run.planets[Math.min(run.stage, BAL.stages)].name : HOME.name,
-        next: run && run.stage < BAL.stages ? run.planets[run.stage + 1].name : null,
         credits: run ? run.credits + (f ? f.scrap : 0) : 0,
         hull: run ? Math.ceil(run.hull) : 0,
         maxHull: st ? st.maxHull : 0,
-        cargo: f ? f.aboard : run ? run.cargoSel : 0,
-        capacity: st ? st.capacity : 0,
+        cells: run ? usedCells(run.hold) : 0,
+        capacity: st ? st.cells : 0,
+        weight: run ? Math.round(holdWeight(run.hold) * 10) / 10 : 0,
         agility: st ? st.agility : 0,
+        worth: run ? netWorth(run) : 0,
         route: route ? route.name : null,
         danger: route ? route.D : null,
         progress: f ? f.progress : null,
-        earned: run ? run.earned : 0,
+        headline: run && run.feed.length ? run.feed[0].text : null,
         best: this.best,
       };
     }
   }
 
   global.BreezeGame = {
-    version: '2.0',
-    BAL, ROUTES, MODS, HAZARD_MODS,
-    shipStats, tripSeconds, hazardPlan, genRoutes, newRun, contractRate, dangerPips, routeInfo,
+    version: '2.1',
+    BAL, ROUTES, MODS, HAZARD_MODS, GOODS, GOOD_IDS, MARKETS, MARKET_LABEL, TRAIT_LABEL,
+    shipStats, tripSeconds, hazardPlan, genRoutes, newRun, dangerPips, routeInfo,
+    price, activeEvent, makeEvent, newsAtPort, saleValue, netWorth,
+    rotatedShape, cellsAt, occupancy, fits, findSpot, holdHazards, holdWeight, usedCells, holdSize,
     Flight, W,
     mount(el, opts) {
       const app = new App(el, opts);

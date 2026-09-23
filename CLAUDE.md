@@ -22,8 +22,12 @@ app only hosts it in a WebView (`MainActivity.kt`). See README.md.
 - The preview is published as a Claude artifact at
   https://claude.ai/artifact/X3Jt7kdrMXpPUgagSBuTj9 . Update it by running
   `node docs/build-preview.mjs --artifact <path>` and publishing `<path>` with that `url`.
-- The Table 4 simulation numbers in the template and README are hand-copied from
-  a bot run; rerun and update them when balance changes.
+- The Table 6 simulation numbers in the template and README are hand-copied from
+  a bot run; rerun and update them when balance changes. The bot must trade
+  (sell all, buy best margin per cell, avoid hazardous adjacency) and fly with
+  human-like reaction, or the numbers mean nothing.
+- Balance lessons so far: anything paid per second favours the long detour;
+  losing more than one cargo piece per hit made the direct route pointless.
 
 ## Owner's preferences
 

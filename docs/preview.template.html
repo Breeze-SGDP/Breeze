@@ -134,7 +134,12 @@
   .tables h3 { margin: 0 0 12px; font: 700 17px/1.3 var(--body); display: flex; gap: 12px; align-items: baseline; }
   .tables h3 .code { font-size: 12px; }
   .up-table, .route-table { min-width: 640px; }
-  .hz-table, .sim-table { min-width: 600px; }
+  .hz-table, .sim-table, .goods-table { min-width: 600px; }
+  .mkt-table { min-width: 680px; }
+  .gauge.headline output { font: 400 13.5px/1.45 var(--body); text-align: right; white-space: normal; }
+  .shape { display: inline-grid; gap: 2px; vertical-align: middle; }
+  .shape i { width: 12px; height: 12px; border-radius: 2px; }
+  td.lo { color: var(--mint); } td.hi { color: var(--coral); }
   .bar { display: inline-block; height: 8px; background: var(--gold); vertical-align: 1px; margin-right: 8px; border-radius: 1px; }
 
   .titleblock { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1px; background: var(--rule); border: 1px solid var(--rule); }
@@ -170,9 +175,9 @@
 
 <main class="sheet">
   <header class="masthead">
-    <p class="code">Drawing BD-02 · Version 2</p>
+    <p class="code">Drawing BD-03 · Version 2.1</p>
     <h1>Breeze Dash <span>II</span></h1>
-    <p class="lede">우주 화물선 로그라이크입니다. 화물을 싣고 행성 여덟 곳을 건너 종착지까지 가며, 번 돈으로 우주선을 개조합니다. 선체가 부서지면 처음부터 다시. 이 페이지의 게임은 안드로이드 앱에 들어가는 파일과 똑같은 코드입니다.</p>
+    <p class="lede">우주 화물선 로그라이크입니다. 행성마다 싼 물건을 사서 비싼 곳에 팔며 여덟 번 항해해 종착지까지 갑니다. 화물은 모양이 제각각이라 화물칸 격자에 맞춰 넣어야 하고, 뉴스가 시세를 흔듭니다. 선체가 부서지면 처음부터 다시. 이 페이지의 게임은 안드로이드 앱에 들어가는 파일과 똑같은 코드입니다.</p>
   </header>
 
   <section class="play" aria-labelledby="play-title">
@@ -191,14 +196,17 @@
           <div class="gauge"><span class="k">항해</span><output id="r-stage">–</output></div>
           <div class="gauge"><span class="k">크레딧</span><output id="r-credits">–</output></div>
           <div class="gauge"><span class="k">선체</span><output id="r-hull">–</output></div>
-          <div class="gauge"><span class="k">화물</span><output id="r-cargo">–</output></div>
+          <div class="gauge"><span class="k">화물칸</span><output id="r-cargo">–</output></div>
+          <div class="gauge"><span class="k">화물 무게</span><output id="r-weight">–</output></div>
+          <div class="gauge"><span class="k">순자산</span><output id="r-worth">–</output></div>
           <div class="gauge"><span class="k">기동성</span><output id="r-agility">–</output></div>
           <div class="gauge"><span class="k">항로</span><output id="r-route">–</output></div>
           <div class="gauge"><span class="k">위험도 D</span><output id="r-danger">–</output></div>
           <div class="gauge"><span class="k">진행도</span><output id="r-progress">–</output></div>
           <div class="gauge wide"><span class="k">최고 기록 <small>이 브라우저에 저장</small></span><output id="r-best">–</output></div>
+          <div class="gauge wide headline"><span class="k">최신 뉴스</span><output id="r-news">–</output></div>
         </div>
-        <p class="footnote">기동성은 엔진 추력 ÷ 무게입니다. 화물 한 개가 무게 0.075, 화물칸 한 단계가 0.08을 더합니다.</p>
+        <p class="footnote">기동성은 엔진 추력 ÷ 무게입니다. 화물 무게 1마다 0.075, 화물칸 한 단계마다 0.08이 무게에 더해집니다. 순자산은 크레딧에 실은 화물의 이 항구 시세를 더한 값입니다.</p>
       </div>
       <div>
         <p class="code">Controls</p>
@@ -206,7 +214,9 @@
         <ul class="controls">
           <li><span><kbd>드래그</kbd></span><span>우주선을 손가락 위치로 이동</span></li>
           <li><span><kbd>II</kbd></span><span>비행 중 오른쪽 위 버튼으로 일시정지</span></li>
+          <li><span><kbd>탭</kbd></span><span>항구에서 화물을 눌러 들고, 빈 칸을 눌러 놓기</span></li>
           <li><span><kbd>Esc</kbd> <kbd>P</kbd></span><span>일시정지·뒤로 <span class="web">— 안드로이드의 뒤로 가기와 같음</span></span></li>
+          <li><span><kbd>R</kbd></span><span>든 화물 회전 <span class="web">— 웹판 단축키</span></span></li>
           <li><span><kbd>←</kbd> <kbd>→</kbd></span><span>키보드로 조종 <span class="web">— 웹판에만 있음</span></span></li>
         </ul>
       </div>
@@ -217,76 +227,86 @@
     <div class="section-head">
       <p class="code">Game loop · Views A – D</p>
       <h2 id="views-title">한 번의 항해</h2>
-      <p>한 판은 항해 여덟 번입니다. 항해마다 아래 네 단계를 거칩니다. 도면 네 장은 게임 코드가 그 상태로 직접 그린 화면입니다.</p>
+      <p>한 판은 항해 여덟 번이고, 종착지에서 가진 크레딧이 점수입니다. 항해마다 아래 네 단계를 거칩니다. 도면 네 장은 게임 코드가 그 상태로 직접 그린 화면입니다.</p>
     </div>
     <div class="loop">
-      <div><span class="step">Step 1 · 항구</span><b>정비하고 싣기</b><p>번 돈으로 엔진·화물칸·선체를 개조하고 수리합니다. 화물을 몇 개 실을지 정합니다.</p></div>
-      <div><span class="step">Step 2 · 항로</span><b>길 고르기</b><p>지름길일수록 빨리 도착해 운임이 늘지만 위험 요소가 몰립니다. 돌아가면 안전하지만 덜 받습니다.</p></div>
-      <div><span class="step">Step 3 · 비행</span><b>피하며 건너기</b><p>드래그로 피합니다. 부딪히면 선체가 깎이고 화물이 쏟아집니다. 떨어지는 화물을 받으면 되찾습니다.</p></div>
-      <div><span class="step">Step 4 · 도착</span><b>정산</b><p>남은 화물만큼 운임을 받습니다. 다음 행성 항구에서 다시 1단계로.</p></div>
+      <div><span class="step">Step 1 · 항구</span><b>사고팔고 싣기</b><p>싣고 온 화물을 팔고, 다음 행성에서 비싸게 팔릴 물건을 삽니다. 모양대로 화물칸에 끼워 넣고, 정비소에서 개조합니다.</p></div>
+      <div><span class="step">Step 2 · 항로</span><b>길 고르기</b><p>지름길로 빨리 도착하면 도착 항구에서 화물이 ×1.3에 팔리지만 위험 요소가 몰립니다. 돌아가면 안전한 대신 ×0.85.</p></div>
+      <div><span class="step">Step 3 · 비행</span><b>피하며 건너기</b><p>부딪히면 화물 하나가 쏟아지고, 받으면 되찾습니다. 연료와 산화제를 붙여 실었다면 폭발합니다. 비행 중에도 속보가 시세를 바꿉니다.</p></div>
+      <div><span class="step">Step 4 · 도착</span><b>보고</b><p>잃은 화물, 폭발, 오염을 확인하고 항구로. 화물은 바로 팔아도 되고, 더 비싼 곳까지 들고 가도 됩니다.</p></div>
     </div>
     <div class="views">
       <figure class="view">
-        <div class="frame" id="scene-port" role="img" aria-label="항구 화면: 화물 계약과 정비소"></div>
-        <figcaption><span class="tag">View A · 항구</span><h3>정비하고 싣기</h3><p>화물을 늘리면 예상 운임과 함께 기동성·비행 시간이 바로 바뀌어 보입니다. 우주선 그림의 화물 포드도 채워집니다.</p></figcaption>
+        <div class="frame" id="scene-port" role="img" aria-label="항구 화면: 뉴스, 화물칸 격자, 시장"></div>
+        <figcaption><span class="tag">View A · 항구</span><h3>화물칸과 시장</h3><p>위에는 뉴스가 흐르고, 화물칸 격자에 모양이 다른 화물이 끼워져 있습니다. 붉은 테두리의 연료·산화제는 폭발 위험, 노란 빗금은 방사능 오염 위험입니다. 시장에는 여기 가격과 다음 행성에서의 차익이 나옵니다.</p></figcaption>
       </figure>
       <figure class="view">
         <div class="frame" id="scene-route" role="img" aria-label="항로 선택 화면: 우회, 표준, 직항 세 갈래"></div>
-        <figcaption><span class="tag">View B · 항로</span><h3>세 갈래 길</h3><p>위쪽 성도에서 선택한 항로가 빛나고, 붉은 점이 그 길의 위험 요소 수입니다. 카드마다 비행 시간·위험도·운임과 특성이 적혀 있습니다.</p></figcaption>
+        <figcaption><span class="tag">View B · 항로</span><h3>세 갈래 길</h3><p>선택한 항로가 성도에서 빛나고, 붉은 점이 그 길의 위험 요소 수입니다. 카드 오른쪽 금액은 지금 화물을 도착 항구에서 팔 때의 예상가로, 빠른 항로일수록 높습니다.</p></figcaption>
       </figure>
       <figure class="view">
         <div class="frame" id="scene-flight" role="img" aria-label="비행 화면: 소행성 스웜의 안전 통로와 혜성 경고선 표기"></div>
-        <figcaption><span class="tag">View C · 비행 · 표기</span><h3>스웜과 혜성</h3><p>직항에서 소행성 스웜을 통과하는 장면입니다. 스웜에는 항상 빈 통로가 있고, 혜성은 붉은 경고선이 먼저 뜹니다. 어려워질수록 예고된 위협이 겹칩니다.</p></figcaption>
+        <figcaption><span class="tag">View C · 비행 · 표기</span><h3>스웜, 혜성, 쏟아진 화물</h3><p>직항에서 소행성 스웜을 통과하는 장면입니다. 스웜에는 항상 빈 통로가 있고, 혜성은 붉은 경고선이 먼저 뜹니다. 주황 상자는 쏟아진 연료로, 받으면 화물칸의 원래 자리로 돌아갑니다.</p></figcaption>
       </figure>
       <figure class="view">
-        <div class="frame" id="scene-arrival" role="img" aria-label="도착 정산 화면"></div>
-        <figcaption><span class="tag">View D · 도착</span><h3>정산</h3><p>배송한 화물 × 개당 운임 × 항로 배율에 주운 고철이 더해집니다. 잃은 화물은 운임에서 빠집니다. 그림 속 숫자는 예시입니다.</p></figcaption>
+        <div class="frame" id="scene-arrival" role="img" aria-label="도착 보고 화면"></div>
+        <figcaption><span class="tag">View D · 도착</span><h3>도착 보고</h3><p>연료와 산화제를 붙여 싣고 직항을 탔다가 폭발한 예시입니다. 동위원소 옆 식량은 오염됐습니다. 비행 중 들어온 속보도 여기서 다시 보여줍니다.</p></figcaption>
       </figure>
     </div>
   </section>
 
   <section aria-labelledby="systems-title">
     <div class="section-head">
-      <p class="code">Tables 1 – 4</p>
+      <p class="code">Tables 1 – 6</p>
       <h2 id="systems-title">수치 도면</h2>
-      <p>아래 표는 모두 게임 코드의 밸런스 값으로 이 페이지가 직접 계산한 것입니다. 코드를 바꾸면 표도 따라 바뀝니다.</p>
+      <p>Table 6의 시뮬레이션만 빼고, 아래 표는 모두 게임 코드의 값으로 이 페이지가 직접 계산한 것입니다. 코드를 바꾸면 표도 따라 바뀝니다.</p>
     </div>
     <div class="tables">
       <div>
-        <h3><span class="code">Table 1</span>개조 단계</h3>
-        <div class="table-wrap"><table class="up-table"><thead><tr><th scope="col">단계</th><th scope="col">엔진 추력</th><th scope="col">화물칸 적재</th><th scope="col">선체 폭</th><th scope="col">최대 선체</th><th scope="col">엔진 비용</th><th scope="col">화물칸 비용</th><th scope="col">선체 비용</th></tr></thead><tbody id="t-up"></tbody></table></div>
+        <h3><span class="code">Table 1</span>화물 여덟 종</h3>
+        <div class="table-wrap"><table class="goods-table"><thead><tr><th scope="col">화물</th><th scope="col">모양</th><th scope="col">칸</th><th scope="col">무게</th><th scope="col">기준가</th><th scope="col">칸당</th><th scope="col">특성</th></tr></thead><tbody id="t-goods"></tbody></table></div>
+        <p class="table-note" id="t-goods-note"></p>
+      </div>
+      <div>
+        <h3><span class="code">Table 2</span>행성별 시세 배율</h3>
+        <div class="table-wrap"><table class="mkt-table"><thead><tr id="t-mkt-h"></tr></thead><tbody id="t-mkt"></tbody></table></div>
+        <p class="table-note">1보다 작으면 그 행성의 산지라 싸고, 크면 수요지라 비쌉니다. 행성마다 ±10% 무작위가 더해지고, 뉴스가 부족이면 ×1.45–1.8, 과잉이면 ×0.55–0.7이 2–3항해 동안 곱해집니다.</p>
+      </div>
+      <div>
+        <h3><span class="code">Table 3</span>개조 단계</h3>
+        <div class="table-wrap"><table class="up-table"><thead><tr><th scope="col">단계</th><th scope="col">엔진 추력</th><th scope="col">화물칸</th><th scope="col">선체 폭</th><th scope="col">최대 선체</th><th scope="col">엔진 비용</th><th scope="col">화물칸 비용</th><th scope="col">선체 비용</th></tr></thead><tbody id="t-up"></tbody></table></div>
         <p class="table-note" id="t-up-note"></p>
       </div>
       <div>
-        <h3><span class="code">Table 2</span>항로 세 갈래</h3>
-        <div class="table-wrap"><table class="route-table"><thead><tr><th scope="col">항로</th><th scope="col">거리</th><th scope="col">위험도 보정</th><th scope="col">운임 배율</th><th scope="col">4번째 항해 D</th><th scope="col">비행 시간</th><th scope="col">소행성 간격</th><th scope="col">접근 속도</th></tr></thead><tbody id="t-route"></tbody></table></div>
-        <p class="table-note">4번째 항해 예시는 엔진·화물칸 기본, 화물 4개, 특성 없음 기준입니다. 접근 속도는 초당 화면 높이 비율입니다. 실제 D에는 항로 특성의 보정이 더해집니다.</p>
+        <h3><span class="code">Table 4</span>항로 세 갈래</h3>
+        <div class="table-wrap"><table class="route-table"><thead><tr><th scope="col">항로</th><th scope="col">거리</th><th scope="col">위험도 보정</th><th scope="col">도착 프리미엄</th><th scope="col">4번째 항해 D</th><th scope="col">비행 시간</th><th scope="col">소행성 간격</th><th scope="col">접근 속도</th></tr></thead><tbody id="t-route"></tbody></table></div>
+        <p class="table-note">4번째 항해 예시는 엔진·화물칸 기본, 화물 무게 4, 특성 없음 기준입니다. 도착 프리미엄은 그 비행으로 싣고 온 화물을 도착 항구에서 팔 때만 붙습니다. 접근 속도는 초당 화면 높이 비율입니다. 실제 D에는 항로 특성의 보정이 더해집니다.</p>
       </div>
       <div>
-        <h3><span class="code">Table 3</span>항로 특성</h3>
+        <h3><span class="code">Table 5</span>항로 특성</h3>
         <div class="table-wrap"><table class="hz-table"><thead><tr><th scope="col">특성</th><th scope="col">등장</th><th scope="col">D 보정</th><th scope="col">설명</th></tr></thead><tbody id="t-mods"></tbody></table></div>
         <p class="table-note" id="t-mods-note"></p>
       </div>
       <div>
-        <h3><span class="code">Table 4</span>시뮬레이션: 항로만 고집하면</h3>
-        <div class="table-wrap"><table class="sim-table"><thead><tr><th scope="col">전략</th><th scope="col">완주</th><th scope="col">항해당 충돌</th><th scope="col">평균 D</th><th scope="col">평균 비행</th><th scope="col">평균 총수입</th></tr></thead><tbody>
-          <tr><td><b class="name">항상 우회</b></td><td>40 / 40</td><td>0.75</td><td>2.62</td><td>45초</td><td><span class="bar" style="width:72px"></span>₵2,444</td></tr>
-          <tr><td><b class="name">항상 표준</b></td><td>40 / 40</td><td>1.72</td><td>4.44</td><td>33초</td><td><span class="bar" style="width:83px"></span>₵2,828</td></tr>
-          <tr><td><b class="name">항상 직항</b></td><td>37 / 40</td><td>2.37</td><td>7.08</td><td>21초</td><td><span class="bar" style="width:100px"></span>₵3,381</td></tr>
-          <tr><td><b class="name">번갈아</b></td><td>40 / 40</td><td>1.58</td><td>4.72</td><td>33초</td><td><span class="bar" style="width:87px"></span>₵2,939</td></tr>
+        <h3><span class="code">Table 6</span>시뮬레이션: 항로만 고집하면</h3>
+        <div class="table-wrap"><table class="sim-table"><thead><tr><th scope="col">전략</th><th scope="col">완주</th><th scope="col">항해당 충돌</th><th scope="col">잃은 화물</th><th scope="col">평균 비행</th><th scope="col">평균 최종 크레딧</th></tr></thead><tbody>
+          <tr><td><b class="name">항상 우회</b></td><td>40 / 40</td><td>0.61</td><td>0.25</td><td>47초</td><td><span class="bar" style="width:39px"></span>₵880</td></tr>
+          <tr><td><b class="name">항상 표준</b></td><td>40 / 40</td><td>1.68</td><td>0.76</td><td>34초</td><td><span class="bar" style="width:54px"></span>₵1,216</td></tr>
+          <tr><td><b class="name">항상 직항</b></td><td>40 / 40</td><td>2.48</td><td>1.41</td><td>22초</td><td><span class="bar" style="width:100px"></span>₵2,251</td></tr>
+          <tr><td><b class="name">번갈아</b></td><td>40 / 40</td><td>1.54</td><td>0.78</td><td>34초</td><td><span class="bar" style="width:56px"></span>₵1,268</td></tr>
         </tbody></table></div>
-        <p class="table-note">실제 게임 코드로 자동 조종사가 전략마다 40판씩 비행한 결과입니다. 조종사는 사람처럼 0.22초마다 판단하고 0.8초 앞까지만 보며 조준 오차가 있습니다. 사람보다 반응이 좋으므로 실제로는 충돌이 더 많습니다. 위험할수록 더 벌고 더 자주 부서지도록 맞췄습니다.</p>
+        <p class="table-note">실제 게임 코드로 자동 조종사가 전략마다 40판씩 비행한 결과입니다. 항구마다 전부 팔고, 다음 행성에서 칸당 차익이 가장 큰 화물부터 사서 폭발·오염 위험 없이 채웁니다. 조종사는 사람처럼 0.22초마다 판단하고 0.8초 앞까지만 보지만 사람보다 반응이 좋아서, 실제로는 충돌과 손실이 더 많습니다. 직항은 가장 많이 벌지만 가장 많이 잃습니다.</p>
       </div>
     </div>
   </section>
 
   <footer class="titleblock" aria-label="도면 정보">
     <div><span class="k">Project</span><span class="v">Breeze Dash II</span></div>
-    <div><span class="k">Drawing</span><span class="v">BD-02 게임 · 화면 도면 · 수치 도면</span></div>
+    <div><span class="k">Drawing</span><span class="v">BD-03 게임 · 화면 도면 · 수치 도면</span></div>
     <div><span class="k">Date</span><span class="v mono">2026-09-23</span></div>
     <div><span class="k">Source</span><span class="v mono">assets/game/game.js</span></div>
     <div><span class="k">Android</span><span class="v">WebView에서 같은 파일 실행</span></div>
-    <div><span class="k">Version</span><span class="v mono">2.0 (versionCode 2)</span></div>
+    <div><span class="k">Version</span><span class="v mono">2.1 (versionCode 3)</span></div>
     <div class="note"><span class="k">Note</span><span class="v">버전 2부터 게임은 한 벌의 HTML·JavaScript 코드입니다. 앱은 이 코드를 안드로이드 WebView로 실행하고, 이 페이지는 같은 코드를 그대로 넣었습니다. 그래서 웹판과 앱이 어긋나지 않습니다. 키보드 조종만 웹판에 있습니다.</span></div>
   </footer>
 </main>
@@ -304,23 +324,42 @@
   const game = G.mount($('game'));
   const scenes = ['port', 'route', 'flight', 'arrival'].map((s) => G.mount($(`scene-${s}`), { scene: s, annotate: s === 'flight' }));
 
-  // ---- Table 1: upgrades ----
   const B = G.BAL;
+
+  // ---- Table 1: goods ----
+  const TRAIT = G.TRAIT_LABEL;
+  $('t-goods').innerHTML = G.GOOD_IDS.map((g) => {
+    const d = G.GOODS[g];
+    const w = Math.max(...d.shape.map((c) => c[0])) + 1;
+    const cells = d.shape.map(([x, y]) => `<i style="grid-column:${x + 1};grid-row:${y + 1};background:${d.color}"></i>`).join('');
+    return `<tr><td><b class="name" style="color:${d.color}">${d.name}</b></td><td><span class="shape" style="grid-template-columns:repeat(${w},12px)">${cells}</span></td>` +
+      `<td>${d.shape.length}</td><td>${d.weight}</td><td>₵${d.base}</td><td>₵${(d.base / d.shape.length).toFixed(1)}</td>` +
+      `<td class="txt" style="min-width:6em">${d.traits.map((t) => TRAIT[t]).join(', ') || '–'}</td></tr>`;
+  }).join('');
+  $('t-goods-note').textContent = `연료와 산화제가 한 칸이라도 맞닿아 있으면, 비행 중 부딪힐 때 둘 다 폭발해 사라지고 선체가 ${B.explosionDamage} 더 깎입니다. 식량·의약품이 동위원소와 맞닿은 채 도착하면 오염되어 값이 ${Math.round(B.contaminatedValue * 100)}%가 됩니다. 무거운 화물은 기동성을 떨어뜨립니다.`;
+
+  // ---- Table 2: markets ----
+  const kinds = Object.keys(G.MARKETS);
+  $('t-mkt-h').innerHTML = '<th scope="col">화물</th>' + kinds.map((k) => `<th scope="col">${G.MARKET_LABEL[k]}</th>`).join('');
+  $('t-mkt').innerHTML = G.GOOD_IDS.map((g) => `<tr><td><b class="name">${G.GOODS[g].name}</b></td>` +
+    kinds.map((k) => { const v = G.MARKETS[k][g]; return `<td class="${v < 0.9 ? 'lo' : v > 1.2 ? 'hi' : ''}">×${v.toFixed(2)}</td>`; }).join('') + '</tr>').join('');
+
+  // ---- Table 3: upgrades ----
   let rows = '';
   for (let lv = 0; lv <= 4; lv++) {
     const cost = (k) => (lv === 0 ? '<span class="unit">기본</span>' : `₵${fmt(B[k].cost[lv - 1])}`);
-    rows += `<tr><td>Lv ${lv}</td><td>${B.engine.thrust[lv]}</td><td>${B.hold.capacity[lv]}<span class="unit">개</span></td>` +
+    rows += `<tr><td>Lv ${lv}</td><td>${B.engine.thrust[lv]}</td><td>${B.hold.grid[lv][0]}×${B.hold.grid[lv][1]}<span class="unit">칸</span></td>` +
       `<td>${Math.round(B.hold.width[lv] * 100)}<span class="unit">%</span></td><td>${B.hull.max[lv]}</td>` +
       `<td>${cost('engine')}</td><td>${cost('hold')}</td><td>${cost('hull')}</td></tr>`;
   }
   $('t-up').innerHTML = rows;
   const empty = G.shipStats({ engine: 0, hold: 0, hull: 0 }, 0).agility;
-  const full = G.shipStats({ engine: 0, hold: 0, hull: 0 }, B.hold.capacity[0]).agility;
-  const maxFull = G.shipStats({ engine: 4, hold: 4, hull: 4 }, B.hold.capacity[4]).agility;
-  $('t-up-note').textContent = `비용은 그 단계로 올릴 때 드는 값입니다. 기동성: 처음 우주선 빈 배 ${Math.round(empty * 100)}%, 가득 실으면 ${Math.round(full * 100)}%. 전부 최대로 개조하고 ${B.hold.capacity[4]}개를 가득 실으면 ${Math.round(maxFull * 100)}%. 화물칸을 키우면 더 싣는 대신 우주선이 넓어져 맞기 쉬워집니다. 수리는 HP당 ₵${B.repairPerHp}.`;
+  const oreFull = G.shipStats({ engine: 0, hold: 0, hull: 0 }, 4 * G.GOODS.ore.weight).agility;
+  const medFull = G.shipStats({ engine: 0, hold: 0, hull: 0 }, 12 * G.GOODS.medicine.weight).agility;
+  $('t-up-note').textContent = `비용은 그 단계로 올릴 때 드는 값입니다. 처음 우주선의 기동성: 빈 배 ${Math.round(empty * 100)}%, 4×3 칸을 광석으로 채우면 ${Math.round(oreFull * 100)}%, 의약품으로 채우면 ${Math.round(medFull * 100)}%. 화물칸을 키우면 더 싣는 대신 우주선이 넓어져 맞기 쉬워집니다. 수리는 HP당 ₵${B.repairPerHp}.`;
 
-  // ---- Table 2: routes ----
-  const st = G.shipStats({ engine: 0, hold: 0, hull: 0 }, B.hold.capacity[0]);
+  // ---- Table 4: routes ----
+  const st = G.shipStats({ engine: 0, hold: 0, hull: 0 }, 4);
   $('t-route').innerHTML = G.ROUTES.map((r) => {
     const D = Math.max(0.8, B.dangerBase(3) + r.danger);
     const plan = G.hazardPlan(D, []);
@@ -331,7 +370,7 @@
       `<td>${plan.speed.toFixed(2)}<span class="unit">H/초</span></td></tr>`;
   }).join('');
 
-  // ---- Table 3: route traits ----
+  // ---- Table 5: route traits ----
   $('t-mods').innerHTML = Object.keys(G.MODS).map((k) => {
     const m = G.MODS[k];
     const when = m.hazard ? `${m.from + 1}번째 항해부터` : '언제나';
@@ -352,7 +391,10 @@
     set('r-stage', inRun ? `${Math.min(s.stage + 1, B.stages)} / ${B.stages}` : '–');
     set('r-credits', inRun ? `₵${fmt(s.credits)}` : '–');
     set('r-hull', inRun ? `${s.hull} / ${s.maxHull}` : '–');
-    set('r-cargo', inRun ? `${s.cargo} / ${s.capacity}` : '–');
+    set('r-cargo', inRun ? `${s.cells} / ${s.capacity}칸` : '–');
+    set('r-weight', inRun ? String(s.weight) : '–');
+    set('r-worth', inRun ? `₵${fmt(s.worth)}` : '–');
+    set('r-news', s.headline && inRun ? s.headline : '–');
     set('r-agility', inRun ? `${Math.round(s.agility * 100)}%` : '–');
     set('r-route', s.route && (s.screen === 'route' || s.screen === 'flight') ? s.route : '–');
     set('r-danger', s.danger != null && (s.screen === 'route' || s.screen === 'flight') ? s.danger.toFixed(2) : '–');

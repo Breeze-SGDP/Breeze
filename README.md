@@ -1,14 +1,14 @@
 # Breeze Dash II
 
-A space-freight roguelike for Android. Load cargo, pick a route, dodge your way
-across eight planets to the Oort terminus, and spend what you earn refitting the
-ship. Lose the hull and the run is over.
+A space-freight roguelike for Android. Buy cheap, sell dear, and dodge your way
+across eight planets to the Oort terminus. Cargo comes in shapes you have to fit
+into the hold, the news moves prices, and losing the hull ends the run.
 
 <p align="center">
-  <img src="docs/screens/port.png" width="190" alt="Port: cargo contract and shipyard">
+  <img src="docs/screens/port.png" width="190" alt="Port: news ticker, cargo grid, market">
   <img src="docs/screens/route.png" width="190" alt="Route choice: detour, standard, direct">
   <img src="docs/screens/flight.png" width="190" alt="Flight through an asteroid swarm, annotated">
-  <img src="docs/screens/arrival.png" width="190" alt="Arrival payout">
+  <img src="docs/screens/arrival.png" width="190" alt="Arrival report">
 </p>
 
 These are drawn by the game code itself, not mocked up. `docs/preview.html` is
@@ -17,33 +17,41 @@ private Claude artifact (see CLAUDE.md).
 
 ## The loop
 
-1. **Port.** Choose how much cargo to load. More cargo pays more but makes the
-   ship heavier: slower to steer and slower to arrive. Spend credits on the
-   engine (thrust), cargo hold (capacity, but a wider ship), hull (max HP) and
-   repairs.
-2. **Route.** Three ways to the next planet. The direct route is short and pays
-   ×1.35 for early delivery but is dangerous; the detour is long, safe and pays
-   ×0.8. Each route also rolls traits: asteroid belt, debris walls, ion storms,
-   asteroid swarms, comets, or calm lanes, scrap fields and supply beacons.
-3. **Flight.** Drag to steer. Hits cost hull and spill cargo; spilled crates
-   tumble back past the ship and can be caught. Swarms always leave a safe lane,
-   comets are announced by a red warning line, ion storms push you sideways.
-4. **Arrival.** Paid for what is still aboard: units × rate × route multiplier,
-   plus scrap picked up on the way.
+1. **Port.** Sell what you carried, buy what the next planets want, and fit it
+   into the hold grid (4×3 up to 6×5). Eight goods, each with its own footprint,
+   weight and price. Tap a piece to pick it up, rotate it, move it or sell it.
+   Spend credits on the engine, the hold (bigger grid, wider ship) and the hull.
+2. **Route.** Three ways to the next planet. Cargo that arrives by the direct
+   route sells ×1.3 at the port it lands at; by the detour, ×0.85. Faster routes
+   are more dangerous and roll hazard traits: asteroid belt, debris walls, ion
+   storms, asteroid swarms, comets.
+3. **Flight.** Drag to steer. A hit spills one piece of cargo, which tumbles back
+   past the ship and can be caught. Swarms always leave a safe lane, comets get a
+   red warning line, and breaking news mid-flight can move prices ahead.
+4. **Arrival.** Report of lost, exploded and contaminated cargo, then port.
 
-Danger per flight is `D = 1.2 + 0.75 × stage + route offset + traits`. D sets
-the approach speed, rock frequency, and whether swarms (D ≥ 4.5) and comets
-(D ≥ 5.5) appear on their own. Scrap per flight also rises with D, so risk is
-where the money is.
+### Cargo rules
 
-A bot flying the real game code 40 runs per strategy, with human-like reaction
-(re-decides every 0.22 s, sees 0.8 s ahead, aims with error):
+- **Explosive pairs.** Fuel touching oxidizer blows up when the ship is hit:
+  both pieces are destroyed and the hull takes 22 extra damage.
+- **Contamination.** Food or medicine touching isotopes arrives worth 40%.
+- **Weight.** Agility is engine thrust divided by mass; ore is heavy, medicine light.
 
-| Strategy | Runs finished | Hits per flight | Avg total earned |
-|---|---|---|---|
-| Always detour | 40 / 40 | 0.75 | ₵2,444 |
-| Always standard | 40 / 40 | 1.72 | ₵2,828 |
-| Always direct | 37 / 40 | 2.37 | ₵3,381 |
+### Markets and news
+
+Each kind of world makes some goods cheaply and pays well for others (the
+terminus buys everything high). The news ticker announces shortages (price
+×1.45–1.8) and gluts (×0.55–0.7) at planets ahead, lasting 2–3 flights. Cargo
+can be held across several flights to reach a better market.
+
+A bot trading and flying the real game code, 40 runs per strategy, with
+human-like reaction (re-decides every 0.22 s, sees 0.8 s ahead, aims with error):
+
+| Strategy | Runs finished | Hits per flight | Pieces lost per flight | Avg final credits |
+|---|---|---|---|---|
+| Always detour | 40 / 40 | 0.61 | 0.25 | ₵880 |
+| Always standard | 40 / 40 | 1.68 | 0.76 | ₵1,216 |
+| Always direct | 40 / 40 | 2.48 | 1.41 | ₵2,251 |
 
 ## Architecture
 
