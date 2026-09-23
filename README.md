@@ -57,7 +57,7 @@ back button and `onPause` call into the page (`breezeBack`, `breezePause`).
 same files into `docs/preview.template.html`. So the phone build and the browser
 preview cannot drift apart.
 
-Version 1 (the native Kotlin leaf-dodging game) is tagged `v1.0`.
+Version 1 (the native Kotlin leaf-dodging game) is commit `d5dd319`.
 
 ## Building
 
