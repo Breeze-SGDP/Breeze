@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>Breeze Dash II</title>
+<link rel="stylesheet" href="game.css">
+<style>
+  html, body { margin: 0; height: 100%; background: #05070f; overflow: hidden; }
+  #app { position: fixed; inset: 0; }
+</style>
+</head>
+<body>
+<div id="app"></div>
+<script src="game.js"></script>
+<script>
+  // Hooks the Android activity calls through evaluateJavascript.
+  const game = BreezeGame.mount(document.getElementById('app'));
+  window.breezeBack = () => game.back();
+  window.breezePause = () => game.pause();
+</script>
+</body>
+</html>
