@@ -7,6 +7,23 @@ Written in Kotlin with nothing but the Android framework — the whole game is d
 on a `SurfaceView` canvas from its own render thread. No game engine, no assets,
 one runtime dependency (`androidx.core`).
 
+## Preview
+
+<p align="center">
+  <img src="docs/screens/ready.png" width="240" alt="Start screen">
+  <img src="docs/screens/running.png" width="240" alt="Gameplay, annotated with layout dimensions">
+  <img src="docs/screens/gameover.png" width="240" alt="Game over screen">
+</p>
+
+These are drawn by the game code itself, not mocked up. The middle view is a real
+autopilot run frozen at 12.6 seconds, annotated with the layout dimensions as
+fractions of screen width (W) and height (H).
+
+`docs/preview.html` is a playable browser port that follows `GameView.kt` rule for
+rule: same speeds, gap widths, sizes and colours. Download it and open it in any
+browser to try the game without installing the APK. After visual changes,
+regenerate the images with `NODE_PATH="$(npm root -g)" node docs/render-screens.mjs`.
+
 ## How to play
 
 | | |
