@@ -26,8 +26,11 @@ app only hosts it in a WebView (`MainActivity.kt`). See README.md.
   a bot run; rerun and update them when balance changes. The bot must trade
   (sell all, buy best margin per cell, avoid hazardous adjacency) and fly with
   human-like reaction, or the numbers mean nothing.
-- Balance lessons so far: anything paid per second favours the long detour;
-  losing more than one cargo piece per hit made the direct route pointless.
+- Balance lessons so far: anything paid per second favours the long detour
+  (it bit twice: floating scrap in 2.0, turret kill drops in 2.2); losing more
+  than one cargo piece per hit made the direct route pointless.
+- Since 2.2 the flight is survivors-style (free 2D movement, hazards from every
+  edge, auto-turret). The sim bot must move in 2D and head for a swarm ring's gap.
 
 ## Owner's preferences
 

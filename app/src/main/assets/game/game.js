@@ -55,9 +55,11 @@
     // The hold is a grid. A bigger hold carries more but widens the ship.
     hold: { grid: [[4, 3], [5, 3], [5, 4], [6, 4], [6, 5]], pods: [4, 6, 8, 11, 14], width: [1.0, 1.08, 1.16, 1.26, 1.36], cost: [60, 120, 210, 340] },
     hull: { max: [100, 130, 165, 205, 250], cost: [50, 100, 170, 270] },
+    // Auto-turret: seconds between shots and reach as a fraction of screen width; twin shots from Lv 3.
+    turret: { every: [0.6, 0.48, 0.38, 0.3, 0.24], range: [0.42, 0.46, 0.5, 0.55, 0.6], cost: [60, 120, 200, 320] },
     repairPerHp: 0.5,
     mass: { base: 1, perHoldLevel: 0.08, perWeight: 0.075 },
-    lateral: 1.9,              // max sideways speed at agility 1, in screen widths per second
+    lateral: 1.9,              // max ship speed at agility 1, in screen widths per second
     baseTrip: 30,              // seconds to fly route distance 1.0 at agility 1
     shipW: 0.12,
     shipLen: 0.15,
@@ -71,22 +73,23 @@
   // Routes trade time for danger. Faster arrival earns a premium on the cargo
   // sold at the port you land at.
   const ROUTES = [
-    { id: 'detour', name: '우회 항로', tag: '돌아감', dist: 1.35, danger: -1.2, pay: 0.85, color: '#7BE495' },
+    { id: 'detour', name: '우회 항로', tag: '돌아감', dist: 1.35, danger: -1.2, pay: 0.8, color: '#7BE495' },
     { id: 'standard', name: '표준 항로', tag: '보통', dist: 1.0, danger: 0, pay: 1.0, color: '#6FD3FF' },
-    { id: 'direct', name: '직항', tag: '지름길', dist: 0.65, danger: 2.3, pay: 1.3, color: '#FF6B7A' },
+    { id: 'direct', name: '직항', tag: '지름길', dist: 0.65, danger: 2.3, pay: 1.35, color: '#FF6B7A' },
   ];
 
   const MODS = {
     belt: { name: '소행성대', desc: '소행성이 더 자주, 더 크게 날아옴', danger: 0.6, hazard: true, from: 0 },
-    debris: { name: '잔해 지대', desc: '틈이 하나뿐인 잔해 벽이 막아섬', danger: 0.5, hazard: true, from: 0 },
-    ion: { name: '이온 폭풍', desc: '옆바람이 우주선을 한쪽으로 밀어냄', danger: 0.6, hazard: true, from: 1 },
-    swarm: { name: '소행성 스웜', desc: '빽빽한 소행성 떼. 빈 통로를 따라갈 것', danger: 0.8, hazard: true, from: 2 },
-    comet: { name: '혜성 궤도', desc: '붉은 경고선이 뜬 뒤 혜성이 내리꽂힘', danger: 0.7, hazard: true, from: 3 },
+    debris: { name: '잔해 지대', desc: '틈이 하나뿐인 잔해 벽이 위나 옆에서 쓸고 지나감', danger: 0.5, hazard: true, from: 0 },
+    ion: { name: '이온 폭풍', desc: '폭풍이 우주선을 한쪽으로 밀어냄', danger: 0.6, hazard: true, from: 1 },
+    swarm: { name: '소행성 스웜', desc: '사방을 에워싸며 좁혀오는 소행성 떼. 초록 틈으로 탈출', danger: 0.8, hazard: true, from: 2 },
+    mines: { name: '기뢰 지대', desc: '우주선을 끝까지 쫓아오는 기뢰. 포탑이 먼저 노림', danger: 0.7, hazard: true, from: 1 },
+    comet: { name: '혜성 궤도', desc: '붉은 경고선을 따라 혜성이 돌진함', danger: 0.7, hazard: true, from: 3 },
     calm: { name: '고요한 궤도', desc: '위험 요소가 드묾', danger: -0.8, hazard: false },
     scrap: { name: '고철 지대', desc: '떠다니는 크레딧 조각이 많음', danger: 0, hazard: false },
     supply: { name: '보급 신호', desc: '수리 키트가 자주 보임', danger: 0, hazard: false },
   };
-  const HAZARD_MODS = ['belt', 'debris', 'ion', 'swarm', 'comet'];
+  const HAZARD_MODS = ['belt', 'debris', 'ion', 'mines', 'swarm', 'comet'];
   const LOOT_MODS = ['scrap', 'supply'];
 
   // ------------------------------------------------------------------ goods
@@ -287,9 +290,9 @@
       return Object.assign({}, p, { noise });
     });
     const run = {
-      v: 3, seed: seed >>> 0, stage: 0,
+      v: 4, seed: seed >>> 0, stage: 0,
       credits: BAL.startCredits,
-      lv: { engine: 0, hold: 0, hull: 0 },
+      lv: { engine: 0, hold: 0, hull: 0, turret: 0 },
       hull: BAL.hull.max[0],
       hold: [], nextId: 1,
       planets, routes: null, routesFor: -1, routeSel: 1,
@@ -325,16 +328,17 @@
   function hazardPlan(D, mods) {
     const has = (m) => mods.indexOf(m) >= 0;
     return {
-      speed: 0.28 + 0.042 * D,                                   // hazard approach, screen heights per second
-      rockEvery: Math.max(0.22, 1.3 - 0.115 * D) * (has('belt') ? 0.65 : 1) * (has('calm') ? 1.5 : 1),
-      rockSize: [0.035, 0.07 + (has('belt') ? 0.03 : 0)],
-      swarmEvery: has('swarm') ? Math.max(8, 17 - D) : D >= 4.5 ? 20 : 0,
+      speed: 0.30 + 0.04 * D,                                    // hazard speed, screen heights per second
+      rockEvery: Math.max(0.16, 0.95 - 0.085 * D) * (has('belt') ? 0.65 : 1) * (has('calm') ? 1.5 : 1),
+      rockSize: [0.03, 0.065 + (has('belt') ? 0.03 : 0)],
+      swarmEvery: has('swarm') ? Math.max(9, 18 - D) : D >= 4.5 ? 22 : 0,
       cometEvery: has('comet') ? Math.max(2.8, 8 - 0.5 * D) : D >= 5.5 ? 9 : 0,
       wallEvery: has('debris') ? Math.max(3.5, 7 - 0.3 * D) : 0,
+      mineEvery: has('mines') ? Math.max(2.2, 6 - 0.4 * D) : D >= 5 ? 8 : 0,
       ion: has('ion'),
-      // Scrap is paid per flight, not per second, and rises with danger:
+      // Floating scrap is counted per flight, not per second, and rises with danger:
       // otherwise the long, safe detour out-earns everything by loitering.
-      scrapCount: (2 + 0.8 * D) * (has('scrap') ? 1.8 : 1),
+      scrapCount: (1.5 + 0.5 * D) * (has('scrap') ? 1.8 : 1),
       repairEvery: has('supply') ? 7 : 16,
     };
   }
@@ -342,6 +346,15 @@
   // ------------------------------------------------------------------ flight
   const W = 1000; // logical width; height follows the screen's aspect ratio
 
+  const turretStats = (lv) => ({
+    every: BAL.turret.every[lv], range: BAL.turret.range[lv] * W, barrels: lv >= 3 ? 2 : 1,
+  });
+  const angDist = (a, b) => Math.abs(((a - b + Math.PI * 3) % TAU) - Math.PI);
+
+  /**
+   * One flight between planets, survivors-style: the ship moves freely in 2D,
+   * hazards come at it from every edge, and a turret shoots on its own.
+   */
   class Flight {
     constructor(run, route, seed) {
       this.run = run;
@@ -353,8 +366,10 @@
       this.newsDone = false;
       this.scrap = 0;
       this.hits = 0;
+      this.kills = 0;
       this.stats = shipStats(run.lv, holdWeight(run.hold));
       this.plan = hazardPlan(this.route.D, this.route.mods);
+      this.gun = turretStats(run.lv.turret || 0);
       this.trip = tripSeconds(this.route, this.stats);
       this.rng = mulberry32(seed);
       this.H = 2100;
@@ -364,28 +379,32 @@
       this.endT = 0;
       this.done = false;
       this.spawning = true;
-      this.shipX = W / 2; this.targetX = W / 2; this.vx = 0; this.bank = 0;
-      this.shipLift = 0;
-      this.rocks = []; this.walls = []; this.comets = []; this.cometWarns = [];
-      this.pickups = []; this.particles = []; this.lanes = [];
-      this.laneW = 0;
-      this.wind = 0;
-      this.ion = { phase: 'calm', t: 5, dir: 1, total: 1 };
+      this.x = W / 2; this.y = this.H * 0.7;
+      this.vx = 0; this.vy = 0;
+      this.tx = this.x; this.ty = this.y;
+      this.bank = 0;
+      this.rocks = []; this.mines = []; this.comets = []; this.cometWarns = []; this.walls = [];
+      this.pickups = []; this.particles = []; this.shots = [];
+      this.ring = null;
+      this.wind = { x: 0, y: 0 };
+      this.ion = { phase: 'calm', t: 5, ax: 1, ay: 0, total: 1 };
       this.swarmWarn = 0; this.swarmUntil = 0;
       this.invuln = 0; this.shake = 0;
       this.warning = null;
       this.gain = null;
+      this.fireT = 0.6;
       const p = this.plan;
       this.timers = {
-        rock: 0.6,
+        rock: 0.5,
         swarm: p.swarmEvery ? p.swarmEvery * 0.35 + 2 : Infinity,
         comet: p.cometEvery ? p.cometEvery * 0.6 : Infinity,
         wall: p.wallEvery ? p.wallEvery * 0.5 : Infinity,
+        mine: p.mineEvery ? p.mineEvery * 0.5 : Infinity,
         scrap: 1.5,
         repair: p.repairEvery * 0.6,
       };
-      // Spread this flight's scrap evenly over its hazardous middle section.
-      this.scrapEvery = Math.max(1.2, (this.trip - 5.7) / p.scrapCount);
+      // Spread this flight's floating scrap evenly over its hazardous middle.
+      this.scrapEvery = Math.max(1.2, (this.trip - 5.2) / p.scrapCount);
       if (holdHazards(run.hold).explosive.length) this.warn('폭발 위험 화물 적재 중', 2.4, 'warn');
     }
 
@@ -400,18 +419,24 @@
     }
     get shipW() { return W * BAL.shipW * this.stats.widthScale; }
     get shipH() { return W * BAL.shipLen; }
-    get shipY() { return this.H * BAL.shipY - this.shipLift; }
-    get hitHW() { return this.shipW * 0.38; }
-    get hitHH() { return this.shipH * 0.36; }
+    get hitR() { return this.shipW * 0.36; }
     get speed() { return this.H * this.plan.speed; }
+    get shipX() { return this.x; }
+    get shipY() { return this.y; }
+    ringRadius() { return this.ring ? this.ring.R - this.ring.v * (this.t - this.ring.t0) : 0; }
 
     setAspect(aspect) {
       const H = Math.round(W * aspect);
       if (H === this.H) return;
       const k = H / this.H;
-      const scaleY = (list) => list.forEach((o) => { o.y *= k; });
-      [this.rocks, this.comets, this.pickups, this.particles, this.lanes].forEach(scaleY);
-      this.walls.forEach((w) => { w.y *= k; w.h *= k; });
+      for (const list of [this.rocks, this.mines, this.comets, this.pickups, this.particles, this.shots, this.cometWarns]) {
+        for (const o of list) o.y *= k;
+      }
+      for (const w of this.walls) {
+        if (w.o === 'h') { w.pos *= k; w.thick *= k; } else { w.gapStart *= k; w.gapEnd *= k; }
+      }
+      if (this.ring) this.ring.cy *= k;
+      this.y *= k; this.ty *= k;
       this.H = H;
     }
 
@@ -421,16 +446,7 @@
       if (dt <= 0 || this.done) return;
       this.t += dt;
       const V = this.speed;
-      const agi = this.stats.agility;
-
-      // Steering: the ship chases the finger, capped by its agility.
-      if (this.state !== 'dead') {
-        const vmax = W * BAL.lateral * agi;
-        const desired = clamp((this.targetX - this.shipX) * 9, -vmax, vmax);
-        this.vx += (desired - this.vx) * Math.min(1, dt * 10 * agi);
-        this.shipX = clamp(this.shipX + (this.vx + this.wind) * dt, this.shipW / 2, W - this.shipW / 2);
-        this.bank += (clamp(this.vx / vmax, -1, 1) - this.bank) * Math.min(1, dt * 8);
-      }
+      if (this.state !== 'dead') this.steer(dt);
 
       if (this.state === 'fly') {
         this.progress = Math.min(1, this.progress + dt / this.trip);
@@ -442,17 +458,18 @@
           this.news = makeEvent(this.run, this.rng, target);
           this.warn(`속보 · ${this.news.headline}`, 2.8, 'news');
         }
+        this.fire(dt);
         if (this.progress >= 1) {
           for (const q of this.pickups) if (q.piece) this.lostPieces.push(q.piece);
           this.pickups = this.pickups.filter((q) => !q.piece);
           this.state = 'arrive';
           this.endT = 0;
-          this.wind = 0;
+          this.wind = { x: 0, y: 0 };
           this.warning = null;
         }
       } else {
         this.endT += dt;
-        if (this.state === 'arrive') this.shipLift += dt * this.H * 0.35 * Math.min(1, this.endT);
+        if (this.state === 'arrive') { this.tx = W / 2; this.ty = -this.H; }
         if (this.endT > (this.state === 'arrive' ? 1.8 : 1.5)) this.done = true;
       }
 
@@ -463,31 +480,49 @@
       if (this.gain && (this.gain.t -= dt) <= 0) this.gain = null;
     }
 
+    /** The ship chases the steering target, capped by its agility. */
+    steer(dt) {
+      const agi = this.stats.agility;
+      const vmax = W * BAL.lateral * agi * (this.state === 'arrive' ? 1.6 : 1);
+      let dvx = (this.tx - this.x) * 9, dvy = (this.ty - this.y) * 9;
+      const m = Math.hypot(dvx, dvy);
+      if (m > vmax) { dvx *= vmax / m; dvy *= vmax / m; }
+      const k = Math.min(1, dt * 10 * agi);
+      this.vx += (dvx - this.vx) * k;
+      this.vy += (dvy - this.vy) * k;
+      this.x += (this.vx + this.wind.x) * dt;
+      this.y += (this.vy + this.wind.y) * dt;
+      this.x = clamp(this.x, this.shipW / 2, W - this.shipW / 2);
+      if (this.state === 'fly') this.y = clamp(this.y, this.H * 0.17, this.H * 0.95 - this.shipH / 2);
+      this.bank += (clamp(this.vx / vmax, -1, 1) - this.bank) * Math.min(1, dt * 8);
+    }
+
     spawn(dt, V) {
       const p = this.plan, tm = this.timers, rng = this.rng;
       const timeLeft = (1 - this.progress) * this.trip;
-      const quiet = this.t < 2.5 || timeLeft < 3.2;
+      const quiet = this.t < 2 || timeLeft < 3.2;
       const swarmBusy = this.swarmWarn > 0 || this.t < this.swarmUntil;
 
       if (!quiet) {
         if ((tm.swarm -= dt) <= 0 && !swarmBusy && this.cometWarns.length === 0 && this.comets.length === 0) {
-          this.swarmWarn = 1.6;
-          this.warn('소행성 스웜 접근', 1.6);
+          this.swarmWarn = 1.8;
+          this.warn('소행성 스웜 포위', 1.8);
           tm.swarm = p.swarmEvery;
         }
         if (!swarmBusy) {
           if ((tm.rock -= dt) <= 0) { tm.rock = p.rockEvery * (0.75 + rng() * 0.5); this.spawnRock(V); }
           if ((tm.comet -= dt) <= 0) { tm.comet = p.cometEvery * (0.8 + rng() * 0.4); this.spawnCometWarn(); }
           if ((tm.wall -= dt) <= 0) { tm.wall = p.wallEvery * (0.85 + rng() * 0.3); this.spawnWall(V); }
+          if ((tm.mine -= dt) <= 0) { tm.mine = p.mineEvery * (0.8 + rng() * 0.4); this.spawnMine(V); }
         }
         if ((tm.scrap -= dt) <= 0) { tm.scrap = this.scrapEvery * (0.7 + rng() * 0.6); this.spawnPickup('scrap', V); }
         if ((tm.repair -= dt) <= 0) { tm.repair = p.repairEvery * (0.8 + rng() * 0.4); this.spawnPickup('repair', V); }
         this.updateIon(dt);
-      } else if (this.wind !== 0) {
-        this.wind *= Math.max(0, 1 - dt * 3);
-        if (Math.abs(this.wind) < 1) this.wind = 0;
+      } else if (this.wind.x || this.wind.y) {
+        this.wind.x *= Math.max(0, 1 - dt * 3);
+        this.wind.y *= Math.max(0, 1 - dt * 3);
+        if (Math.hypot(this.wind.x, this.wind.y) < 1) this.wind = { x: 0, y: 0 };
       }
-
       if (this.swarmWarn > 0 && (this.swarmWarn -= dt) <= 0) this.spawnSwarm(V);
     }
 
@@ -496,85 +531,144 @@
       const ion = this.ion;
       ion.t -= dt;
       if (ion.phase === 'calm' && ion.t <= 0) {
-        ion.phase = 'warn'; ion.t = 1.2; ion.dir = this.rng() < 0.5 ? -1 : 1;
-        this.warn(`이온 폭풍 ${ion.dir > 0 ? '→' : '←'}`, 1.2, 'warn');
+        const a = this.rng() * TAU;
+        ion.phase = 'warn'; ion.t = 1.2; ion.ax = Math.cos(a); ion.ay = Math.sin(a) * 0.6;
+        const arrow = Math.abs(ion.ax) > Math.abs(ion.ay) ? (ion.ax > 0 ? '→' : '←') : (ion.ay > 0 ? '↓' : '↑');
+        this.warn(`이온 폭풍 ${arrow}`, 1.2, 'warn');
       } else if (ion.phase === 'warn' && ion.t <= 0) {
         ion.phase = 'gust'; ion.t = ion.total = 5;
       } else if (ion.phase === 'gust') {
-        const k = Math.sin(Math.PI * (1 - Math.max(0, ion.t) / ion.total));
-        this.wind = ion.dir * W * 0.42 * k;
-        if (ion.t <= 0) { ion.phase = 'calm'; ion.t = 4 + this.rng() * 3; this.wind = 0; }
+        const k = Math.sin(Math.PI * (1 - Math.max(0, ion.t) / ion.total)) * W * 0.42;
+        this.wind = { x: ion.ax * k, y: ion.ay * k };
+        if (ion.t <= 0) { ion.phase = 'calm'; ion.t = 4 + this.rng() * 3; this.wind = { x: 0, y: 0 }; }
       }
     }
 
-    makeRock(x, y, r, vx, vy, dmg, swarm) {
+    /** A point just off-screen, not too close to the ship. Mostly ahead (top). */
+    edgePoint(minDist) {
+      const rng = this.rng, H = this.H;
+      let pt = null;
+      for (let i = 0; i < 8; i++) {
+        const r = rng();
+        if (r < 0.5) pt = { x: rng() * W, y: -60 };
+        else if (r < 0.9) pt = { x: rng() < 0.5 ? -60 : W + 60, y: H * (0.05 + rng() * 0.75) };
+        else pt = { x: rng() * W, y: H + 60 };
+        if (Math.hypot(pt.x - this.x, pt.y - this.y) > minDist) break;
+      }
+      return pt;
+    }
+    /** Velocity from `from` toward the ship (give or take `spread`), plus forward drift. */
+    aimAt(from, speed, spread) {
       const rng = this.rng;
-      const n = 9;
+      const tx = this.x + (rng() - 0.5) * spread, ty = this.y + (rng() - 0.5) * spread;
+      const dx = tx - from.x, dy = ty - from.y, m = Math.hypot(dx, dy) || 1;
+      return { vx: (dx / m) * speed, vy: (dy / m) * speed + this.speed * 0.12 };
+    }
+
+    makeRock(x, y, r, vx, vy, dmg, swarm, hp) {
+      const rng = this.rng;
       const verts = [];
-      for (let i = 0; i < n; i++) verts.push(0.74 + rng() * 0.3);
-      return { x, y, r, vx, vy, dmg, swarm: !!swarm, verts, rot: rng() * TAU, spin: (rng() - 0.5) * 1.6, shade: rng() };
+      for (let i = 0; i < 9; i++) verts.push(0.74 + rng() * 0.3);
+      return { x, y, r, vx, vy, dmg, hp, swarm: !!swarm, verts, rot: rng() * TAU, spin: (rng() - 0.5) * 1.6, shade: rng() };
     }
 
     spawnRock(V) {
       const rng = this.rng, p = this.plan;
       const r = W * lerp(p.rockSize[0], p.rockSize[1], Math.pow(rng(), 1.5));
-      const x = rng() < 0.3 ? clamp(this.shipX + (rng() - 0.5) * W * 0.5, r, W - r) : rng() * W;
-      this.rocks.push(this.makeRock(x, -r - 10, r, (rng() - 0.5) * W * 0.06, V * (0.9 + rng() * 0.25), Math.round(8 + (r / W) * 200)));
+      const e = this.edgePoint(W * 0.55);
+      const v = this.aimAt(e, V * (0.8 + rng() * 0.4), W * 0.35);
+      const hp = r < W * 0.045 ? 1 : r < W * 0.07 ? 2 : 3;
+      this.rocks.push(this.makeRock(e.x, e.y, r, v.vx, v.vy, Math.round(6 + (r / W) * 170), false, hp));
     }
 
+    /** A ring of rocks closing in on the ship, with one gap to escape through. */
     spawnSwarm(V) {
       const rng = this.rng;
-      const rows = 11, gapY = this.H * 0.045;
-      const laneW = Math.max(W * 0.24, this.hitHW * 2 * 2.1);
-      const lo = laneW / 2 + 12, hi = W - laneW / 2 - 12;
-      let c = clamp(W * (0.25 + rng() * 0.5), lo, hi);
-      this.laneW = laneW;
-      this.lanes = [];
-      for (let i = 0; i < rows; i++) {
-        c = clamp(c + (rng() - 0.5) * W * 0.09, lo, hi);
-        const y = -this.H * 0.04 - i * gapY;
-        this.lanes.push({ y, c, vy: V });
-        let x = rng() * W * 0.05;
-        while (x < W + 20) {
-          const r = W * (0.021 + rng() * 0.013);
-          if (Math.abs(x - c) > laneW / 2 + r) {
-            this.rocks.push(this.makeRock(x, y + (rng() - 0.5) * gapY * 0.4, r, 0, V, 10, true));
-          }
-          x += W * (0.062 + rng() * 0.03);
-        }
+      const cx = this.x, cy = this.y;
+      const R = Math.hypot(W, this.H) * 0.62;
+      const gap = rng() * TAU, gapHalf = 0.42;
+      const n = Math.round(28 + this.route.D * 2);
+      const v = V * 0.75;
+      for (let i = 0; i < n; i++) {
+        const a = (i / n) * TAU + rng() * 0.05;
+        if (angDist(a, gap) < gapHalf) continue;
+        const r = W * (0.022 + rng() * 0.012);
+        this.rocks.push(this.makeRock(cx + Math.cos(a) * R, cy + Math.sin(a) * R, r, -Math.cos(a) * v, -Math.sin(a) * v, 10, true, 1));
       }
-      this.swarmUntil = this.t + (this.H * 0.04 + rows * gapY + this.shipY + this.shipH) / V + 0.3;
+      this.ring = { cx, cy, R, v, t0: this.t, gap, gapHalf };
+      this.swarmUntil = this.t + R / v + 0.6;
     }
 
     spawnCometWarn() {
-      const x = clamp(this.shipX + (this.rng() - 0.5) * W * 0.3, 40, W - 40);
-      this.cometWarns.push({ x, t: 1.1, total: 1.1 });
+      const e = this.edgePoint(W * 0.6);
+      const dx = this.x - e.x, dy = this.y - e.y, m = Math.hypot(dx, dy) || 1;
+      this.cometWarns.push({ x: e.x, y: e.y, dx: dx / m, dy: dy / m, t: 1.1, total: 1.1 });
       this.warn('혜성 경고', 1.1);
     }
 
     spawnWall(V) {
-      const gap = Math.max(W * 0.26, this.hitHW * 2 * 2.0);
-      const c = clamp(this.shipX + (this.rng() - 0.5) * W * 0.8, gap / 2 + 20, W - gap / 2 - 20);
-      this.walls.push({ y: -this.H * 0.03, h: this.H * 0.024, gapStart: c - gap / 2, gapEnd: c + gap / 2, vy: V, dmg: 20, broken: false });
+      const rng = this.rng, H = this.H;
+      const gap = Math.max(W * 0.26, this.hitR * 2 * 2.4);
+      if (rng() < 0.6) {
+        const c = clamp(this.x + (rng() - 0.5) * W * 0.8, gap / 2 + 20, W - gap / 2 - 20);
+        this.walls.push({ o: 'h', pos: -H * 0.03, thick: H * 0.022, gapStart: c - gap / 2, gapEnd: c + gap / 2, vel: V * 0.75, dmg: 20, broken: false });
+      } else {
+        const fromLeft = rng() < 0.5;
+        const c = clamp(this.y + (rng() - 0.5) * H * 0.4, H * 0.2 + gap / 2, H * 0.92 - gap / 2);
+        this.walls.push({ o: 'v', pos: fromLeft ? -W * 0.05 : W * 1.01, thick: W * 0.04, gapStart: c - gap / 2, gapEnd: c + gap / 2, vel: (fromLeft ? 1 : -1) * V * 0.75, dmg: 20, broken: false });
+      }
+    }
+
+    spawnMine(V) {
+      const e = this.edgePoint(W * 0.6);
+      this.mines.push({ x: e.x, y: e.y, vx: 0, vy: 0, r: W * 0.026, hp: 2, speed: V * 0.42, life: 14, blink: this.rng() });
     }
 
     spawnPickup(kind, V) {
       const rng = this.rng;
-      const x = W * (0.08 + rng() * 0.84);
-      if (kind === 'scrap') {
-        const value = Math.round((6 + rng() * 8) * (1 + this.run.stage * 0.15));
-        this.pickups.push({ kind, x, y: -30, r: W * 0.022, vx: 0, vy: V * 0.85, g: 0, delay: 0, value, spin: rng() * TAU });
-      } else {
-        this.pickups.push({ kind, x, y: -30, r: W * 0.03, vx: 0, vy: V * 0.8, g: 0, delay: 0, value: 18, spin: 0 });
-      }
+      const e = this.edgePoint(W * 0.4);
+      const aim = { x: W * (0.2 + rng() * 0.6), y: this.H * (0.3 + rng() * 0.5) };
+      const dx = aim.x - e.x, dy = aim.y - e.y, m = Math.hypot(dx, dy) || 1;
+      const s = V * 0.5;
+      const q = { kind, x: e.x, y: e.y, vx: (dx / m) * s, vy: (dy / m) * s, r: W * (kind === 'scrap' ? 0.022 : 0.03), delay: 0, life: 12, spin: rng() * TAU };
+      q.value = kind === 'scrap' ? Math.round((6 + rng() * 8) * (1 + this.run.stage * 0.15)) : 18;
+      this.pickups.push(q);
+    }
+
+    dropScrap(x, y, value) {
+      const a = this.rng() * TAU;
+      this.pickups.push({ kind: 'scrap', x, y, vx: Math.cos(a) * 60, vy: Math.sin(a) * 60, r: W * 0.018, delay: 0, life: 9, spin: 0, value });
     }
 
     burst(x, y, n, color, speed, life) {
       const rng = this.rng;
-      for (let i = 0; i < n && this.particles.length < 260; i++) {
+      for (let i = 0; i < n && this.particles.length < 300; i++) {
         const a = rng() * TAU, s = W * speed * (0.3 + rng() * 0.7), l = life * (0.5 + rng() * 0.5);
         this.particles.push({ x, y, vx: Math.cos(a) * s, vy: Math.sin(a) * s, r: W * (0.004 + rng() * 0.009), life: l, max: l, color });
       }
+    }
+
+    /** The turret picks the nearest rock or mine in range and leads its shot. */
+    fire(dt) {
+      if ((this.fireT -= dt) > 0) return;
+      const range = this.gun.range;
+      const cands = [];
+      for (const o of this.rocks.concat(this.mines)) {
+        const d = Math.hypot(o.x - this.x, o.y - this.y);
+        if (d < range && o.x > -20 && o.x < W + 20 && o.y > -20 && o.y < this.H + 20) cands.push({ o, d });
+      }
+      if (!cands.length) { this.fireT = 0.08; return; }
+      cands.sort((a, b) => a.d - b.d);
+      const speed = W * 2.4;
+      const ox = this.x, oy = this.y - this.shipH * 0.3;
+      for (let i = 0; i < Math.min(this.gun.barrels, cands.length); i++) {
+        const o = cands[i].o;
+        const tt = cands[i].d / speed;
+        const px = o.x + o.vx * tt, py = o.y + o.vy * tt;
+        const dx = px - ox, dy = py - oy, m = Math.hypot(dx, dy) || 1;
+        this.shots.push({ x: ox, y: oy, vx: (dx / m) * speed, vy: (dy / m) * speed, life: 0.6 });
+      }
+      this.fireT = this.gun.every;
     }
 
     hit(dmg, x, y) {
@@ -598,84 +692,135 @@
         this.burst(x, y, 20, '#6fd3ff', 0.4, 0.6);
         this.warn('화물 폭발', 1.4);
       }
-      // Loose cargo tumbles up and falls back past the ship: catch it to recover it.
-      const lose = Math.min(run.hold.length, 1);
-      for (let i = 0; i < lose; i++) {
+      // One piece of loose cargo flies out: fly over it to catch it before it drifts off.
+      if (run.hold.length) {
         const piece = run.hold.splice(Math.floor(this.rng() * run.hold.length), 1)[0];
+        const a = this.rng() * TAU;
         this.pickups.push({
-          kind: 'crate', piece, x: this.shipX, y: this.shipY - this.shipH * 0.2, r: W * (0.022 + 0.004 * piece.cells.length),
-          vx: (this.rng() - 0.5) * W * 0.55, vy: -this.H * 0.32, g: this.H * 0.8, delay: 0.45, value: 1, spin: 0,
+          kind: 'crate', piece, x: this.x, y: this.y, r: W * (0.022 + 0.004 * piece.cells.length),
+          vx: Math.cos(a) * W * 0.55, vy: Math.sin(a) * W * 0.55, drag: 1.6, delay: 0.45, life: 3.5, value: 1, spin: 0,
         });
       }
       if (run.hull <= 0) {
         this.state = 'dead';
         this.endT = 0;
         this.warning = null;
-        this.wind = 0;
-        this.burst(this.shipX, this.shipY, 60, '#ffb45c', 0.6, 1.1);
-        this.burst(this.shipX, this.shipY, 30, '#6fd3ff', 0.4, 0.9);
+        this.wind = { x: 0, y: 0 };
+        this.burst(this.x, this.y, 60, '#ffb45c', 0.6, 1.1);
+        this.burst(this.x, this.y, 30, '#6fd3ff', 0.4, 0.9);
       }
       return true;
     }
 
     moveThings(dt, V) {
-      const H = this.H, sx = this.shipX, sy = this.shipY, hw = this.hitHW, hh = this.hitHH;
+      const H = this.H, sx = this.x, sy = this.y, hr = this.hitR;
       const live = this.state === 'fly';
-      const rectCircle = (cx, cy, r) => {
-        const dx = cx - clamp(cx, sx - hw, sx + hw);
-        const dy = cy - clamp(cy, sy - hh, sy + hh);
-        return dx * dx + dy * dy < r * r;
-      };
+      const touches = (o, r) => Math.hypot(o.x - sx, o.y - sy) < hr + r;
+      // Gone for good: well off-screen and heading further away.
+      const away = (o, m) => (o.x < -m && o.vx <= 0) || (o.x > W + m && o.vx >= 0) || (o.y < -m && o.vy <= 0) || (o.y > H + m && o.vy >= 0);
+      const stage = this.run.stage;
+
+      for (let i = this.shots.length - 1; i >= 0; i--) {
+        const s = this.shots[i];
+        s.x += s.vx * dt; s.y += s.vy * dt;
+        let hitSomething = false;
+        for (const list of [this.rocks, this.mines]) {
+          for (let j = list.length - 1; j >= 0 && !hitSomething; j--) {
+            const o = list[j];
+            if (Math.hypot(o.x - s.x, o.y - s.y) < o.r + 8) {
+              hitSomething = true;
+              o.hp -= 1;
+              this.burst(s.x, s.y, 4, '#cfefff', 0.15, 0.25);
+              if (o.hp <= 0) {
+                list.splice(j, 1);
+                this.kills++;
+                const mine = list === this.mines;
+                this.burst(o.x, o.y, mine ? 18 : 10, mine ? '#ff6b7a' : '#9d8f80', 0.3, 0.5);
+                // Rocks rarely pay (kill counts grow with flight time); mines, found on dangerous routes, usually do.
+                if (this.rng() < (mine ? 0.6 : 0.04)) this.dropScrap(o.x, o.y, Math.round((3 + this.rng() * 3) * (1 + stage * 0.15)));
+              }
+            }
+          }
+        }
+        if (hitSomething || (s.life -= dt) <= 0) this.shots.splice(i, 1);
+      }
 
       for (let i = this.rocks.length - 1; i >= 0; i--) {
         const o = this.rocks[i];
         o.x += o.vx * dt; o.y += o.vy * dt; o.rot += o.spin * dt;
-        if (live && rectCircle(o.x, o.y, o.r * 0.88) && this.hit(o.dmg, o.x, o.y)) {
+        if (live && touches(o, o.r * 0.85) && this.hit(o.dmg, o.x, o.y)) {
           this.burst(o.x, o.y, 10, '#9d8f80', 0.3, 0.6);
           this.rocks.splice(i, 1);
           continue;
         }
-        if (o.y - o.r > H) this.rocks.splice(i, 1);
+        if (away(o, 200)) this.rocks.splice(i, 1);
       }
-      for (const l of this.lanes) l.y += l.vy * dt;
-      if (this.lanes.length && this.lanes[this.lanes.length - 1].y > H + 50) this.lanes = [];
+      if (this.ring && this.ringRadius() < -W * 0.2) this.ring = null;
+
+      for (let i = this.mines.length - 1; i >= 0; i--) {
+        const m = this.mines[i];
+        const dx = sx - m.x, dy = sy - m.y, d = Math.hypot(dx, dy) || 1;
+        const k = Math.min(1, dt * 1.5);
+        m.vx += ((dx / d) * m.speed - m.vx) * k;
+        m.vy += ((dy / d) * m.speed - m.vy) * k;
+        m.x += m.vx * dt; m.y += m.vy * dt;
+        if (live && touches(m, m.r) && this.hit(18, m.x, m.y)) {
+          this.burst(m.x, m.y, 22, '#ff6b7a', 0.4, 0.6);
+          this.mines.splice(i, 1);
+          continue;
+        }
+        if ((m.life -= dt) <= 0 || this.state !== 'fly') {
+          this.burst(m.x, m.y, 8, '#ff6b7a', 0.2, 0.4);
+          this.mines.splice(i, 1);
+        }
+      }
 
       for (let i = this.cometWarns.length - 1; i >= 0; i--) {
         const w = this.cometWarns[i];
         if ((w.t -= dt) <= 0) {
-          this.comets.push({ x: w.x, y: -H * 0.08, r: W * 0.03, vy: V * 3.4, dmg: 28 });
+          this.comets.push({ x: w.x, y: w.y, vx: w.dx * V * 3.2, vy: w.dy * V * 3.2, r: W * 0.03, dmg: 28 });
           this.cometWarns.splice(i, 1);
         }
       }
       for (let i = this.comets.length - 1; i >= 0; i--) {
         const c = this.comets[i];
-        c.y += c.vy * dt;
-        if (live && rectCircle(c.x, c.y, c.r) && this.hit(c.dmg, c.x, c.y)) { this.comets.splice(i, 1); continue; }
-        if (c.y - c.r > H) this.comets.splice(i, 1);
+        c.x += c.vx * dt; c.y += c.vy * dt;
+        if (live && touches(c, c.r) && this.hit(c.dmg, c.x, c.y)) { this.comets.splice(i, 1); continue; }
+        if (away(c, 300)) this.comets.splice(i, 1);
       }
 
       for (let i = this.walls.length - 1; i >= 0; i--) {
         const w = this.walls[i];
-        w.y += w.vy * dt;
-        if (live && !w.broken && w.y + w.h >= sy - hh && w.y <= sy + hh && (sx - hw < w.gapStart || sx + hw > w.gapEnd)) {
-          if (this.hit(w.dmg, sx, w.y + w.h)) w.broken = true;
+        w.pos += w.vel * dt;
+        if (live && !w.broken) {
+          const [c, lo, hi] = w.o === 'h' ? [sy, sx - hr, sx + hr] : [sx, sy - hr, sy + hr];
+          const inBand = Math.abs(c - clamp(c, w.pos, w.pos + w.thick)) < hr;
+          if (inBand && (lo < w.gapStart || hi > w.gapEnd) && this.hit(w.dmg, sx, sy)) w.broken = true;
         }
-        if (w.y > H + 20) this.walls.splice(i, 1);
+        const out = w.o === 'h' ? w.pos > H + 20 : (w.vel > 0 ? w.pos > W + 20 : w.pos + w.thick < -20);
+        if (out) this.walls.splice(i, 1);
       }
 
       for (let i = this.pickups.length - 1; i >= 0; i--) {
         const p = this.pickups[i];
-        p.vy += p.g * dt;
-        p.x = clamp(p.x + p.vx * dt, p.r, W - p.r);
-        p.y += p.vy * dt;
+        if (p.drag) { p.vx *= Math.max(0, 1 - dt * p.drag); p.vy *= Math.max(0, 1 - dt * p.drag); }
+        const d = Math.hypot(sx - p.x, sy - p.y) || 1;
+        // Scrap and repair kits are pulled in once you are close (crates must be flown over).
+        if (p.kind !== 'crate' && this.state !== 'dead' && d < W * 0.18) {
+          const pull = W * 1.4;
+          p.vx = ((sx - p.x) / d) * pull;
+          p.vy = ((sy - p.y) / d) * pull;
+        }
+        p.x += p.vx * dt; p.y += p.vy * dt;
         p.spin += dt * 3;
         if (p.delay > 0) p.delay -= dt;
-        if (this.state !== 'dead' && p.delay <= 0 && rectCircle(p.x, p.y, p.r + W * 0.015)) {
+        if (this.state !== 'dead' && p.delay <= 0 && touches(p, p.r + W * 0.015)) {
           this.collect(p);
           this.pickups.splice(i, 1);
           continue;
         }
-        if (p.y - p.r > H) {
+        p.life -= dt;
+        if (p.life <= 0 || away(p, 120)) {
           if (p.piece) this.lostPieces.push(p.piece);
           this.pickups.splice(i, 1);
         }
@@ -693,7 +838,7 @@
       if (p.kind === 'scrap') {
         this.scrap += p.value;
         this.gain = { text: `+${p.value}`, t: 0.9 };
-        this.burst(p.x, p.y, 8, '#ffc857', 0.2, 0.4);
+        this.burst(p.x, p.y, 6, '#ffc857', 0.15, 0.35);
       } else if (p.kind === 'repair') {
         const max = BAL.hull.max[this.run.lv.hull];
         this.run.hull = Math.min(max, this.run.hull + p.value);
@@ -702,13 +847,6 @@
         this.run.hold.push(p.piece); // its cells are still free: nothing else moves in the hold
         this.burst(p.x, p.y, 8, GOODS[p.piece.good].color, 0.2, 0.4);
       }
-    }
-
-    /** The swarm lane row nearest the ship, for the autopilot and the blueprint. */
-    laneNear(y) {
-      let best = null;
-      for (const l of this.lanes) if (!best || Math.abs(l.y - y) < Math.abs(best.y - y)) best = l;
-      return best;
     }
   }
 
@@ -960,44 +1098,89 @@
       drawPlanet(ctx, W * 0.5, H + W * 0.3 + k * k * H * 0.6, W * 0.78, origin);
     }
 
-    // Comet warning lines
+    // Turret range, only shown on the annotated blueprint
+    if (opts && opts.showRange) {
+      ctx.strokeStyle = 'rgba(111,211,255,0.28)';
+      ctx.lineWidth = 3;
+      ctx.setLineDash([14, 12]);
+      ctx.beginPath(); ctx.arc(f.x, f.y, f.gun.range, 0, TAU); ctx.stroke();
+      ctx.setLineDash([]);
+    }
+
+    // Closing swarm: its ring and the gap to escape through
+    if (f.ring) {
+      const rr = f.ringRadius();
+      if (rr > 20) {
+        const g = f.ring;
+        ctx.lineWidth = 4;
+        ctx.strokeStyle = 'rgba(255,107,122,0.22)';
+        ctx.beginPath(); ctx.arc(g.cx, g.cy, rr, g.gap + g.gapHalf, g.gap - g.gapHalf + TAU); ctx.stroke();
+        ctx.lineWidth = 10;
+        ctx.strokeStyle = `rgba(123,228,149,${(0.55 + 0.3 * Math.sin(t * 10)).toFixed(3)})`;
+        ctx.beginPath(); ctx.arc(g.cx, g.cy, rr, g.gap - g.gapHalf, g.gap + g.gapHalf); ctx.stroke();
+      }
+    }
+
+    // Comet warning lines, drawn from the entry point through where the ship was
     for (const w of f.cometWarns) {
       const pulse = 0.35 + 0.35 * Math.sin((w.total - w.t) * 18);
       ctx.strokeStyle = `rgba(255,107,122,${pulse.toFixed(3)})`;
       ctx.lineWidth = 6;
       ctx.setLineDash([26, 18]);
-      ctx.beginPath(); ctx.moveTo(w.x, 0); ctx.lineTo(w.x, H); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(w.x, w.y); ctx.lineTo(w.x + w.dx * 4000, w.y + w.dy * 4000); ctx.stroke();
       ctx.setLineDash([]);
-      ctx.fillStyle = '#ff6b7a';
-      ctx.beginPath(); ctx.moveTo(w.x, H * 0.16); ctx.lineTo(w.x - 22, H * 0.16 - 36); ctx.lineTo(w.x + 22, H * 0.16 - 36); ctx.closePath(); ctx.fill();
     }
 
-    // Debris walls
+    // Debris walls, sweeping down or across
     for (const w of f.walls) {
       if (w.broken) continue;
       ctx.fillStyle = '#b8694e';
-      if (w.gapStart > 0) { roundRect(ctx, -20, w.y, w.gapStart + 20, w.h, w.h / 2); ctx.fill(); }
-      if (w.gapEnd < W) { roundRect(ctx, w.gapEnd, w.y, W - w.gapEnd + 20, w.h, w.h / 2); ctx.fill(); }
-      ctx.fillStyle = 'rgba(255,220,190,0.55)';
-      ctx.fillRect(0, w.y, w.gapStart, 3);
-      ctx.fillRect(w.gapEnd, w.y, W - w.gapEnd, 3);
+      if (w.o === 'h') {
+        if (w.gapStart > 0) { roundRect(ctx, -20, w.pos, w.gapStart + 20, w.thick, w.thick / 2); ctx.fill(); }
+        if (w.gapEnd < W) { roundRect(ctx, w.gapEnd, w.pos, W - w.gapEnd + 20, w.thick, w.thick / 2); ctx.fill(); }
+      } else {
+        if (w.gapStart > 0) { roundRect(ctx, w.pos, -20, w.thick, w.gapStart + 20, w.thick / 2); ctx.fill(); }
+        if (w.gapEnd < H) { roundRect(ctx, w.pos, w.gapEnd, w.thick, H - w.gapEnd + 20, w.thick / 2); ctx.fill(); }
+      }
     }
 
     for (const o of f.rocks) drawRock(ctx, o);
 
+    for (const m of f.mines) {
+      ctx.fillStyle = '#3a3f52';
+      ctx.beginPath(); ctx.arc(m.x, m.y, m.r, 0, TAU); ctx.fill();
+      ctx.strokeStyle = '#8a91a8';
+      ctx.lineWidth = 4;
+      for (let k = 0; k < 6; k++) {
+        const a = (k / 6) * TAU + t;
+        ctx.beginPath(); ctx.moveTo(m.x + Math.cos(a) * m.r, m.y + Math.sin(a) * m.r); ctx.lineTo(m.x + Math.cos(a) * m.r * 1.45, m.y + Math.sin(a) * m.r * 1.45); ctx.stroke();
+      }
+      ctx.fillStyle = Math.sin(t * 12 + m.blink * 6) > 0 ? '#ff6b7a' : '#6b1f2a';
+      ctx.beginPath(); ctx.arc(m.x, m.y, m.r * 0.38, 0, TAU); ctx.fill();
+    }
+
     for (const c of f.comets) {
-      const tail = ctx.createLinearGradient(c.x, c.y - H * 0.28, c.x, c.y);
+      const sp = Math.hypot(c.vx, c.vy) || 1, ux = c.vx / sp, uy = c.vy / sp, L = H * 0.28;
+      const tail = ctx.createLinearGradient(c.x - ux * L, c.y - uy * L, c.x, c.y);
       tail.addColorStop(0, 'rgba(120,220,255,0)');
       tail.addColorStop(1, 'rgba(190,240,255,0.85)');
       ctx.fillStyle = tail;
       ctx.beginPath();
-      ctx.moveTo(c.x - c.r * 0.9, c.y);
-      ctx.lineTo(c.x, c.y - H * 0.28);
-      ctx.lineTo(c.x + c.r * 0.9, c.y);
+      ctx.moveTo(c.x - uy * c.r * 0.9, c.y + ux * c.r * 0.9);
+      ctx.lineTo(c.x - ux * L, c.y - uy * L);
+      ctx.lineTo(c.x + uy * c.r * 0.9, c.y - ux * c.r * 0.9);
       ctx.fill();
       ctx.fillStyle = '#f2fbff';
       ctx.beginPath(); ctx.arc(c.x, c.y, c.r, 0, TAU); ctx.fill();
     }
+
+    ctx.strokeStyle = '#bff0ff';
+    ctx.lineWidth = 5;
+    ctx.lineCap = 'round';
+    for (const s of f.shots) {
+      ctx.beginPath(); ctx.moveTo(s.x, s.y); ctx.lineTo(s.x - s.vx * 0.02, s.y - s.vy * 0.02); ctx.stroke();
+    }
+    ctx.lineCap = 'butt';
 
     for (const q of f.pickups) {
       if (q.kind === 'scrap') {
@@ -1020,7 +1203,8 @@
         ctx.fillRect(q.x - q.r * 0.55, q.y - q.r * 0.16, q.r * 1.1, q.r * 0.32);
         ctx.fillRect(q.x - q.r * 0.16, q.y - q.r * 0.55, q.r * 0.32, q.r * 1.1);
       } else {
-        ctx.globalAlpha = q.delay > 0 ? 0.6 : 1;
+        const fading = q.life < 1 && Math.floor(q.life * 8) % 2 === 0;
+        ctx.globalAlpha = q.delay > 0 ? 0.6 : fading ? 0.35 : 1;
         ctx.fillStyle = q.piece ? GOODS[q.piece.good].color : '#f4a93a';
         roundRect(ctx, q.x - q.r, q.y - q.r * 0.8, q.r * 2, q.r * 1.6, 6); ctx.fill();
         ctx.strokeStyle = 'rgba(80,40,0,0.6)';
@@ -1037,7 +1221,7 @@
       const used = usedCells(f.run.hold);
       const full = used ? Math.max(1, Math.round((used / cells) * pods)) : 0;
       const gone = Math.min(pods - full, Math.round((f.lostCells() / cells) * pods));
-      drawShip(ctx, f.shipX, f.shipY, f.shipW, f.shipH, f.bank, pods, full, gone, flame, blink);
+      drawShip(ctx, f.x, f.y, f.shipW, f.shipH, f.bank, pods, full, gone, flame, blink);
     }
 
     for (const q of f.particles) {
@@ -1048,23 +1232,24 @@
     ctx.globalAlpha = 1;
     ctx.restore();
 
-    // Swarm incoming: red wash at the top edge
+    // Swarm incoming: red wash closing in from every edge
     if (f.swarmWarn > 0) {
-      const a = 0.25 + 0.2 * Math.sin(t * 16);
-      const g = ctx.createLinearGradient(0, 0, 0, H * 0.22);
-      g.addColorStop(0, `rgba(255,80,100,${a.toFixed(3)})`);
-      g.addColorStop(1, 'rgba(255,80,100,0)');
+      const a = 0.22 + 0.18 * Math.sin(t * 16);
+      const g = ctx.createRadialGradient(W / 2, H / 2, Math.min(W, H) * 0.35, W / 2, H / 2, Math.hypot(W, H) * 0.6);
+      g.addColorStop(0, 'rgba(255,80,100,0)');
+      g.addColorStop(1, `rgba(255,80,100,${a.toFixed(3)})`);
       ctx.fillStyle = g;
-      ctx.fillRect(0, 0, W, H * 0.22);
+      ctx.fillRect(0, 0, W, H);
     }
-    if (f.wind !== 0) {
-      ctx.strokeStyle = 'rgba(170,140,255,0.35)';
+    const wm = Math.hypot(f.wind.x, f.wind.y);
+    if (wm > 1) {
+      const ux = f.wind.x / wm, uy = f.wind.y / wm, k = wm / (W * 0.42);
+      ctx.strokeStyle = `rgba(170,140,255,${(0.2 + 0.25 * k).toFixed(3)})`;
       ctx.lineWidth = 3;
-      const k = f.wind / (W * 0.42);
-      for (let i = 0; i < 10; i++) {
-        const y = ((i * 0.1 + t * 0.4) % 1) * H;
-        const x = ((i * 0.37 + t * k * 0.8) % 1 + 1) % 1 * W;
-        ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x + k * 120, y + 10); ctx.stroke();
+      for (let i = 0; i < 12; i++) {
+        const x = ((i * 0.37 + t * ux * 0.6) % 1 + 1) % 1 * W;
+        const y = ((i * 0.61 + t * uy * 0.6 + i * 0.05) % 1 + 1) % 1 * H;
+        ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x + ux * 120 * k, y + uy * 120 * k); ctx.stroke();
       }
     }
   }
@@ -1287,36 +1472,49 @@
     }
 
     bindInput() {
-      const toX = (e) => {
+      const toLogical = (e) => {
         const r = this.canvas.getBoundingClientRect();
-        return ((e.clientX - r.left) / r.width) * W;
+        return { x: ((e.clientX - r.left) / r.width) * W, y: ((e.clientY - r.top) / r.height) * this.H };
       };
       const flying = () => this.screen === 'flight' && !this.paused && this.flight;
+      // Drag anywhere: the ship moves by as much as the finger does, so the
+      // finger never covers the ship.
       this.canvas.addEventListener('pointerdown', (e) => {
         if (!flying()) return;
         this.pointerDown = true;
         try { this.canvas.setPointerCapture(e.pointerId); } catch (_) { /* unsupported */ }
-        this.flight.targetX = toX(e);
+        const f = this.flight, pt = toLogical(e);
+        this.drag = { fx: pt.x, fy: pt.y, sx: f.x, sy: f.y };
+        f.tx = f.x; f.ty = f.y;
         e.preventDefault();
       });
       this.canvas.addEventListener('pointermove', (e) => {
-        if (this.pointerDown && flying()) this.flight.targetX = toX(e);
+        if (!this.pointerDown || !flying() || !this.drag) return;
+        const f = this.flight, pt = toLogical(e), k = 1.25;
+        f.tx = clamp(this.drag.sx + (pt.x - this.drag.fx) * k, 0, W);
+        f.ty = clamp(this.drag.sy + (pt.y - this.drag.fy) * k, 0, f.H);
+        // Re-anchor at the edges so the ship responds as soon as the finger turns back.
+        if (f.tx === 0 || f.tx === W) { this.drag.fx = pt.x; this.drag.sx = f.tx; }
+        if (f.ty === 0 || f.ty === f.H) { this.drag.fy = pt.y; this.drag.sy = f.ty; }
       });
-      const up = () => { this.pointerDown = false; };
+      const up = () => { this.pointerDown = false; this.drag = null; };
       this.canvas.addEventListener('pointerup', up);
       this.canvas.addEventListener('pointercancel', up);
+      this.keys = new Set();
+      const KEYMAP = { ArrowLeft: 'l', ArrowRight: 'r', ArrowUp: 'u', ArrowDown: 'd', a: 'l', d: 'r', w: 'u', s: 'd', A: 'l', D: 'r', W: 'u', S: 'd' };
       this.root.tabIndex = -1;
       this.root.addEventListener('keydown', (e) => {
         if (e.key === 'Escape' || e.key === 'p' || e.key === 'P') {
           if (this.back()) e.preventDefault();
-        } else if ((e.key === 'ArrowLeft' || e.key === 'ArrowRight') && flying()) {
-          const f = this.flight;
-          f.targetX = clamp(f.shipX + (e.key === 'ArrowLeft' ? -160 : 160), 0, W);
+        } else if (KEYMAP[e.key] && flying()) {
+          this.keys.add(KEYMAP[e.key]);
           e.preventDefault();
         } else if ((e.key === 'r' || e.key === 'R') && this.held) {
           this.act('rotate');
         }
       });
+      this.root.addEventListener('keyup', (e) => { if (KEYMAP[e.key]) this.keys.delete(KEYMAP[e.key]); });
+      this.root.addEventListener('blur', () => this.keys.clear());
     }
 
     // ---- saves ----
@@ -1324,7 +1522,10 @@
     loadSave() {
       try {
         const r = JSON.parse(store.get(SAVE_KEY) || 'null');
-        return r && r.v === 3 && Array.isArray(r.planets) && Array.isArray(r.hold) ? r : null;
+        if (!r || (r.v !== 3 && r.v !== 4) || !Array.isArray(r.planets) || !Array.isArray(r.hold)) return null;
+        r.lv.turret = r.lv.turret || 0; // runs saved before the turret existed
+        r.v = 4;
+        return r;
       } catch (_) { return null; }
     }
 
@@ -1621,6 +1822,12 @@
       if (this.toast && this.t > this.toast.until) { this.toast = null; if (this.screen === 'port') this.render(); }
       if (this.screen === 'flight' && this.flight && !this.paused) {
         const f = this.flight;
+        if (this.keys && this.keys.size && f.state === 'fly') {
+          const kx = (this.keys.has('r') ? 1 : 0) - (this.keys.has('l') ? 1 : 0);
+          const ky = (this.keys.has('d') ? 1 : 0) - (this.keys.has('u') ? 1 : 0);
+          f.tx = clamp(f.x + kx * 180, 0, W);
+          f.ty = clamp(f.y + ky * 180, 0, f.H);
+        }
         f.update(dt);
         moveStars(this.stars, (dt * (0.3 + 0.6 * f.stats.speedFactor)), this.rng);
         if (f.done) this.endFlight();
@@ -1639,9 +1846,9 @@
         const dest = run.planets[run.stage + 1];
         drawSky(ctx, H, dest.glow);
         drawStars(ctx, H, this.stars, this.t, f.state === 'fly' ? 18 * f.stats.speedFactor : 0);
-        drawFlight(ctx, f, this.t, dest, run.planets[run.stage], { noShake: !!this.opts.scene });
+        drawFlight(ctx, f, this.t, dest, run.planets[run.stage], { noShake: !!this.opts.scene, showRange: !!this.opts.annotate });
         drawHud(ctx, f, run, dest);
-        if (this.opts.annotate) this.drawAnnotations(ctx, f, dest);
+        if (this.opts.annotate) this.drawAnnotations(ctx, f);
         return;
       }
       const planet = run ? run.planets[Math.min(run.stage, BAL.stages)] : HOME;
@@ -1683,7 +1890,7 @@
           <button class="bd-btn ${saved ? '' : 'primary'}" data-act="new">새 항해</button>
         </div>
         ${this.best ? `<p class="bd-best">최고 기록 <b>₵ ${fmt(this.best)}</b></p>` : ''}
-        <p class="bd-hint">드래그로 조종 · 무거운 화물일수록 둔해집니다</p>
+        <p class="bd-hint">화면 어디든 누르고 끌면 그만큼 움직입니다 · 포탑은 알아서 쏩니다</p>
       </div>`;
     }
 
@@ -1780,8 +1987,9 @@
           <button class="bd-btn buy" data-act="up" data-arg="${kind}" ${maxed || run.credits < cost ? 'disabled' : ''}>${maxed ? '최대' : `₵ ${fmt(cost)}`}</button>
         </div>`;
       };
-      const e = run.lv.engine, h = run.lv.hold, u = run.lv.hull;
+      const e = run.lv.engine, h = run.lv.hold, u = run.lv.hull, tu = run.lv.turret || 0;
       const g = BAL.hold.grid;
+      const gunTxt = (lv) => `${(1 / BAL.turret.every[lv]).toFixed(1)}발/초${lv >= 3 ? ' ×2' : ''}`;
       const tenCost = Math.ceil(Math.min(10, missing) * BAL.repairPerHp);
       const allCost = Math.ceil(missing * BAL.repairPerHp);
       return `<section class="bd-card">
@@ -1789,6 +1997,7 @@
           ${up('engine', '엔진', `추력 ${BAL.engine.thrust[e]}`, `${BAL.engine.thrust[e + 1]} · 기동성과 속도 ↑`)}
           ${up('hold', '화물칸', `${g[h][0]}×${g[h][1]}칸`, h < 4 ? `${g[h + 1][0]}×${g[h + 1][1]}칸 · 선체 폭 ${Math.round(BAL.hold.width[h + 1] * 100)}%` : '')}
           ${up('hull', '선체', `최대 ${BAL.hull.max[u]}`, `${BAL.hull.max[u + 1]}`)}
+          ${up('turret', '포탑', gunTxt(tu), tu < 4 ? gunTxt(tu + 1) : '')}
           <div class="bd-up bd-up-repair">
             <div class="bd-up-info"><div class="bd-up-name"><b>수리</b></div><small>${missing > 0 ? `손상 ${Math.ceil(missing)} · HP당 ₵${BAL.repairPerHp}` : '손상 없음'}</small></div>
             <div class="bd-row tight">
@@ -1946,7 +2155,7 @@
       const run = this.run;
       if (name === 'flight') {
         run.hold = run.hold.filter((p) => p.good !== 'oxidizer');
-        const route = { id: 'direct', mods: ['swarm', 'comet'], D: 0 };
+        const route = { id: 'direct', mods: ['swarm', 'mines'], D: 0 };
         route.D = Math.round(clamp(BAL.dangerBase(run.stage) + 2.3 + 0.8 + 0.7, 0.8, 10) * 100) / 100;
         const f = new Flight(run, route, 4242);
         f.setAspect(this.H / W);
@@ -1955,32 +2164,32 @@
         f.progress = 0.58;
         f.scrap = 36;
         f.warning = null;
+        f.x = f.tx = W * 0.46;
+        f.y = f.ty = f.H * 0.64;
         const spilled = run.hold.splice(run.hold.findIndex((p) => p.good === 'fuel'), 1)[0];
-        f.pickups.push({ kind: 'crate', piece: spilled, x: W * 0.3, y: f.H * 0.7, r: W * 0.03, vx: 0, vy: 0, g: 0, delay: 0, value: 1, spin: 0 });
-        f.pickups.push({ kind: 'repair', x: W * 0.82, y: f.H * 0.47, r: W * 0.03, vx: 0, vy: 0, g: 0, delay: 0, value: 18, spin: 0 });
+        f.pickups.push({ kind: 'crate', piece: spilled, x: W * 0.24, y: f.H * 0.8, r: W * 0.03, vx: 0, vy: 0, drag: 0, delay: 0, life: 99, value: 1, spin: 0 });
+        f.mines.push({ x: W * 0.86, y: f.H * 0.46, vx: 0, vy: 0, r: W * 0.026, hp: 2, speed: 0, life: 99, blink: 0.3 });
+        f.mines.push({ x: W * 0.12, y: f.H * 0.4, vx: 0, vy: 0, r: W * 0.026, hp: 2, speed: 0, life: 99, blink: 0.7 });
         f.spawnSwarm(f.speed);
         f.invuln = 999; // the scripted approach must not take hits
-        // Fly the lane for real until the swarm reaches the ship.
-        for (let i = 0; i < 400; i++) {
-          const lane = f.laneNear(f.shipY - f.H * 0.12);
-          if (lane) f.targetX = lane.c;
+        // Head for the gap for real while the ring closes and the turret works.
+        for (let i = 0; i < 75; i++) {
+          const g = f.ring, rr = f.ringRadius();
+          f.tx = clamp(g.cx + Math.cos(g.gap) * (rr + 150), 60, W - 60);
+          f.ty = clamp(g.cy + Math.sin(g.gap) * (rr + 150), f.H * 0.2, f.H * 0.9);
           f.update(1 / 60);
-          const first = f.lanes[0];
-          if (first && first.y > f.shipY - f.H * 0.02) break;
         }
         f.invuln = 0;
         f.hits = 0;
         run.hull = 104;
-        const lane = f.laneNear(f.shipY - f.H * 0.25);
-        const cx = lane && lane.c < W / 2 ? W * 0.8 : W * 0.2;
-        f.cometWarns.push({ x: cx, t: 0.7, total: 1.1 });
-        f.warning = null; // the warning line carries its own callout in this still
+        const dx = f.x - W, dy = f.y - f.H * 0.28, m = Math.hypot(dx, dy);
+        f.cometWarns.push({ x: W + 60, y: f.H * 0.28, dx: dx / m, dy: dy / m, t: 0.7, total: 1.1 });
+        f.warning = null;
         f.gain = null;
         this.flight = f;
         this.screen = 'flight';
         this.root.dataset.screen = 'flight';
         this.body.innerHTML = '';
-        this.annotation = { cometX: cx };
         return;
       }
       if (name === 'arrival') {
@@ -2002,7 +2211,7 @@
       this.show(name);
     }
 
-    drawAnnotations(ctx, f, dest) {
+    drawAnnotations(ctx, f) {
       const ink = 'rgba(226,240,255,0.96)';
       const fs = 30;
       ctx.save();
@@ -2012,7 +2221,8 @@
         const bw = tw + 28, bh = fs + 20;
         let bx = align === 'right' ? x - bw : align === 'center' ? x - bw / 2 : x;
         bx = clamp(bx, 10, W - bw - 10);
-        roundRect(ctx, bx, y - bh / 2, bw, bh, 10);
+        const by = clamp(y, f.H * 0.12 + bh / 2, f.H - bh);
+        roundRect(ctx, bx, by - bh / 2, bw, bh, 10);
         ctx.fillStyle = 'rgba(6,14,34,0.9)';
         ctx.fill();
         ctx.strokeStyle = 'rgba(226,240,255,0.6)';
@@ -2021,43 +2231,20 @@
         ctx.fillStyle = ink;
         ctx.textAlign = 'left';
         ctx.textBaseline = 'middle';
-        ctx.fillText(text, bx + 14, y + 1);
-        return { bx, bw };
+        ctx.fillText(text, bx + 14, by + 1);
       };
-      const lead = (x1, y1, x2, y2) => {
-        ctx.strokeStyle = ink;
-        ctx.lineWidth = 2.5;
-        ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
-        ctx.beginPath(); ctx.arc(x2, y2, 6, 0, TAU); ctx.fillStyle = ink; ctx.fill();
-      };
-      const arrowDim = (x1, x2, y) => {
-        ctx.strokeStyle = ink;
-        ctx.fillStyle = ink;
-        ctx.lineWidth = 3;
-        ctx.beginPath(); ctx.moveTo(x1, y); ctx.lineTo(x2, y); ctx.stroke();
-        for (const [x, d] of [[x1, 1], [x2, -1]]) {
-          ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x + d * 18, y - 9); ctx.lineTo(x + d * 18, y + 9); ctx.closePath(); ctx.fill();
-          ctx.beginPath(); ctx.moveTo(x, y - 16); ctx.lineTo(x, y + 16); ctx.stroke();
-        }
-      };
-      const lane = f.laneNear(f.shipY - f.H * 0.2);
-      if (lane) {
-        arrowDim(lane.c - f.laneW / 2, lane.c + f.laneW / 2, lane.y);
-        label(`안전 통로 · 폭 ${Math.round((f.laneW / W) * 100)}% W`, lane.c, lane.y - 44, 'center');
+      // The ring and its gap
+      if (f.ring) {
+        const g = f.ring, rr = f.ringRadius();
+        const gx = g.cx + Math.cos(g.gap) * rr, gy = g.cy + Math.sin(g.gap) * rr;
+        label('탈출 틈', gx, gy + (gy > f.H / 2 ? 60 : -60), 'center');
+        label('포위 스웜 · 좁혀옴', W * 0.5, g.cy - Math.min(rr, f.H) * 0.55, 'center');
       }
-      if (this.annotation) {
-        const x = this.annotation.cometX;
-        label('혜성 경고선 · 곧 낙하', x, f.H * 0.36, x > W / 2 ? 'right' : 'left');
-      }
+      for (const w of f.cometWarns) label('혜성 경고선 · 이 선을 따라 돌진', w.x + w.dx * 380, w.y + w.dy * 380 - 50, 'right');
+      label('자동 포탑 사거리', f.x + f.gun.range * 0.5, f.y + f.gun.range * 0.87 + 20, 'center');
+      if (f.mines[0]) label('추적 기뢰', f.mines[0].x, f.mines[0].y + 70, 'center');
       const crate = f.pickups.find((q) => q.piece);
-      if (crate) label(`쏟아진 ${GOODS[crate.piece.good].name} · 받으면 회수`, crate.x + 40, crate.y - 60, 'left');
-      const sx = f.shipX, sy = f.shipY;
-      const lx = sx < W / 2 ? W * 0.62 : W * 0.06;
-      const { bx, bw } = label(`화물칸 ${usedCells(f.run.hold)}/${f.stats.cells}칸 · 무거울수록 둔함`, lx, sy + f.shipH * 0.95, 'left');
-      lead(bx + (sx < W / 2 ? 0 : bw), sy + f.shipH * 0.95, sx + (sx < W / 2 ? f.shipW * 0.36 : -f.shipW * 0.36), sy);
-      const pr = W * (0.07 + 0.5 * f.progress * f.progress);
-      const py = f.H * 0.14 - pr * 0.55 * f.progress;
-      label(`목적지 ${dest.name} · 가까울수록 커짐`, W * 0.5, py + pr + 40, 'center');
+      if (crate) label(`쏟아진 ${GOODS[crate.piece.good].name} · 지나가면 회수`, crate.x - 30, crate.y + 70, 'left');
       ctx.restore();
     }
 
@@ -2080,6 +2267,7 @@
         route: route ? route.name : null,
         danger: route ? route.D : null,
         progress: f ? f.progress : null,
+        ship: f ? { x: Math.round(f.x), y: Math.round(f.y) } : null,
         headline: run && run.feed.length ? run.feed[0].text : null,
         best: this.best,
       };

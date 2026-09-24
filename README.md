@@ -7,7 +7,7 @@ into the hold, the news moves prices, and losing the hull ends the run.
 <p align="center">
   <img src="docs/screens/port.png" width="190" alt="Port: news ticker, cargo grid, market">
   <img src="docs/screens/route.png" width="190" alt="Route choice: detour, standard, direct">
-  <img src="docs/screens/flight.png" width="190" alt="Flight through an asteroid swarm, annotated">
+  <img src="docs/screens/flight.png" width="190" alt="Flight: escaping a closing swarm, annotated">
   <img src="docs/screens/arrival.png" width="190" alt="Arrival report">
 </p>
 
@@ -20,14 +20,18 @@ private Claude artifact (see CLAUDE.md).
 1. **Port.** Sell what you carried, buy what the next planets want, and fit it
    into the hold grid (4×3 up to 6×5). Eight goods, each with its own footprint,
    weight and price. Tap a piece to pick it up, rotate it, move it or sell it.
-   Spend credits on the engine, the hold (bigger grid, wider ship) and the hull.
+   Spend credits on the engine, the hold (bigger grid, wider ship), the hull and
+   the turret (fire rate and range; twin shots from Lv 3).
 2. **Route.** Three ways to the next planet. Cargo that arrives by the direct
-   route sells ×1.3 at the port it lands at; by the detour, ×0.85. Faster routes
+   route sells ×1.35 at the port it lands at; by the detour, ×0.8. Faster routes
    are more dangerous and roll hazard traits: asteroid belt, debris walls, ion
-   storms, asteroid swarms, comets.
-3. **Flight.** Drag to steer. A hit spills one piece of cargo, which tumbles back
-   past the ship and can be caught. Swarms always leave a safe lane, comets get a
-   red warning line, and breaking news mid-flight can move prices ahead.
+   storms, homing mines, asteroid swarms, comets.
+3. **Flight.** Survivors-style: the ship moves freely in 2D (drag anywhere; the
+   ship moves as far as the finger does), hazards fly at it from every edge, and
+   an auto-turret shoots the nearest rock or mine. Swarms close in as a ring with
+   one green gap to escape through, comets charge along a red warning line, mines
+   home in. A hit knocks one piece of cargo loose; fly over it to catch it.
+   Breaking news mid-flight can move prices ahead.
 4. **Arrival.** Report of lost, exploded and contaminated cargo, then port.
 
 ### Cargo rules
@@ -45,13 +49,14 @@ terminus buys everything high). The news ticker announces shortages (price
 can be held across several flights to reach a better market.
 
 A bot trading and flying the real game code, 40 runs per strategy, with
-human-like reaction (re-decides every 0.22 s, sees 0.8 s ahead, aims with error):
+human-like reaction (re-decides every 0.22 s, sees 0.8 s ahead, aims with error),
+moving in 2D and heading for the gap when a swarm closes in:
 
 | Strategy | Runs finished | Hits per flight | Pieces lost per flight | Avg final credits |
 |---|---|---|---|---|
-| Always detour | 40 / 40 | 0.61 | 0.25 | ₵880 |
-| Always standard | 40 / 40 | 1.68 | 0.76 | ₵1,216 |
-| Always direct | 40 / 40 | 2.48 | 1.41 | ₵2,251 |
+| Always detour | 40 / 40 | 1.16 | 0.13 | ₵762 |
+| Always standard | 40 / 40 | 2.99 | 0.53 | ₵836 |
+| Always direct | 40 / 40 | 4.37 | 1.28 | ₵1,296 |
 
 ## Architecture
 

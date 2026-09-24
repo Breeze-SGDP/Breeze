@@ -173,6 +173,7 @@
 .bd-up-engine .bd-pips i.on { background: var(--bd-eng); }
 .bd-up-hold .bd-pips i.on { background: var(--bd-hold); }
 .bd-up-hull .bd-pips i.on { background: var(--bd-hull); }
+.bd-up-turret .bd-pips i.on { background: #bff0ff; }
 .bd-pips i.bad { background: var(--bd-bad); }
 .bd-up-repair .bd-row { gap: 0.4em; }
 
